@@ -1,4 +1,4 @@
-# Static analysis configuration for Resonance.
+# Static analysis configuration for Viby.
 #
 # Base ruleset is flutter_lints; a few stricter rules are layered on top.
 # custom_lint powers riverpod_lint (Riverpod-specific analysis).

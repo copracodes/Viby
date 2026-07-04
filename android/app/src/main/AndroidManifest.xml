@@ -28,7 +28,7 @@
         android:maxSdkVersion="32" />
 
     <application
-        android:label="resonance"
+        android:label="Viby"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

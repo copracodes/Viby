@@ -7,13 +7,13 @@ import 'ui/theme/app_theme.dart';
 ///
 /// Wires the Material 3 theme and go_router together. Deliberately thin — no
 /// business logic lives here.
-class ResonanceApp extends StatelessWidget {
-  const ResonanceApp({super.key});
+class VibyApp extends StatelessWidget {
+  const VibyApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp.router(
-      title: 'Resonance',
+      title: 'Viby',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),

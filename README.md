@@ -1,6 +1,6 @@
-# resonance
+# viby
 
-Resonance — a premium music player.
+Viby — a premium music player.
 
 ## Getting Started
 

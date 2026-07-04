@@ -11,7 +11,7 @@ class HomeScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final TextTheme text = Theme.of(context).textTheme;
     return Scaffold(
-      appBar: AppBar(title: const Text('Resonance')),
+      appBar: AppBar(title: const Text('Viby')),
       body: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -22,7 +22,7 @@ class HomeScreen extends StatelessWidget {
               color: Theme.of(context).colorScheme.primary,
             ),
             const SizedBox(height: 16),
-            Text('Resonance', style: text.headlineMedium),
+            Text('Viby', style: text.headlineMedium),
             const SizedBox(height: 8),
             Text('Scaffold ready.', style: text.bodyMedium),
           ],

@@ -6,7 +6,7 @@ plugins {
 }
 
 android {
-    namespace = "com.yourname.resonance"
+    namespace = "com.copra.viby"
     // Compile against the latest stable API (must be >= targetSdk below).
     // 36 (Android 16) is required by flutter_secure_storage 10.x.
     compileSdk = 36
@@ -22,7 +22,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.yourname.resonance"
+        applicationId = "com.copra.viby"
         // minSdk 24 (Android 7.0): floor required by just_audio / audio_service
         // and a sensible baseline for a modern media app.
         minSdk = 24

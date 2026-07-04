@@ -1,7 +1,11 @@
-# CLAUDE.md — Resonance
+# CLAUDE.md — Viby
 
-Resonance is a premium Android-first music player (local files + Subsonic
+Viby is a premium Android-first music player (local files + Subsonic
 servers) built with Flutter, Material 3, Riverpod, and drift.
+
+- **Dart package:** `viby`
+- **Android applicationId / namespace:** `com.copra.viby`
+- **iOS bundle id:** `com.copra.viby`
 
 This file governs every session. Read it before writing code and keep it true.
 
@@ -89,6 +93,11 @@ newest `drift`/`riverpod` codegen releases (which require Dart ≥ 3.8) do not
 resolve, so the stack is held at the latest compatible line: **Riverpod 2.6.x**
 (codegen) and **drift 2.26.x**. Bump these together with a Flutter upgrade, not
 in isolation. Exact versions are pinned in `pubspec.lock` (committed).
+
+The on-device media-query package is **`on_audio_query_pluse`**, a maintained
+fork of the discontinued `on_audio_query`. The original declares no Android
+`namespace` and fails to build under AGP 8; the fork is API-compatible
+(`OnAudioQuery()`) and AGP 8 clean. Keep using the fork.
 
 ---
 

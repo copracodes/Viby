@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-/// Central Material 3 theme for Resonance.
+/// Central Material 3 theme for Viby.
 ///
 /// Keep all colour / typography decisions here — screens and widgets should
 /// read from `Theme.of(context)`, never hard-code colours.
