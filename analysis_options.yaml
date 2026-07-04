@@ -1,0 +1,24 @@
+# Static analysis configuration for Resonance.
+#
+# Base ruleset is flutter_lints; a few stricter rules are layered on top.
+# custom_lint powers riverpod_lint (Riverpod-specific analysis).
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  plugins:
+    - custom_lint
+  # Generated files should not be analysed or block CI.
+  exclude:
+    - "**/*.g.dart"
+    - "**/*.freezed.dart"
+  language:
+    strict-casts: true
+
+linter:
+  rules:
+    # Enforce const where possible for cheaper rebuilds.
+    prefer_const_constructors: true
+    # Every function/method must declare its return type explicitly.
+    always_declare_return_types: true
+    # Ban dynamic dispatch — keeps the codebase type-safe.
+    avoid_dynamic_calls: true

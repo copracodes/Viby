@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(flutter doctor *)",
+      "Bash(yes)",
+      "Bash(flutter doctor *)",
+      "Bash(flutter --version)",
+      "Bash(flutter channel *)",
+      "Bash(dart --version)",
+      "Bash(flutter create *)",
+      "Bash(flutter pub *)",
+      "Bash(awk '/^  [a-z0-9_]+:$/{pkg=$1} /version:/{print pkg, $2}' pubspec.lock)",
+      "Bash(dart run *)",
+      "Bash(ps -W)",
+      "Bash(flutter analyze *)",
+      "Bash(flutter test *)",
+      "Bash(flutter devices *)",
+      "Bash(flutter run *)",
+      "Bash(curl -sI --max-time 20 \"https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-gradle-plugin/1.9.20/kotlin-gradle-plugin-1.9.20-gradle81.jar\")",
+      "Bash(./android/gradlew --stop)",
+      "Bash(adb -s emulator-5554 shell screencap -p /sdcard/resonance_home.png)",
+      "Bash(adb -s emulator-5554 pull /sdcard/resonance_home.png \"C:/TEMP/Temp/claude/C--Users-HP-Desktop-2026-projects-Viby/b6e734e3-51ee-4e29-9cff-e663ec1202db/scratchpad/resonance_home.png\")",
+      "Bash(adb -s emulator-5554 shell dumpsys activity activities)",
+      "Bash(export MSYS_NO_PATHCONV=1)",
+      "Bash(/c/Users/HP/AppData/Local/Android/Sdk/platform-tools/adb.exe -s emulator-5554 shell screencap -p //sdcard/r.png)",
+      "Bash(/c/Users/HP/AppData/Local/Android/Sdk/platform-tools/adb.exe -s emulator-5554 pull //sdcard/r.png C:/TEMP/Temp/claude/C--Users-HP-Desktop-2026-projects-Viby/b6e734e3-51ee-4e29-9cff-e663ec1202db/scratchpad/resonance_home.png)",
+      "Bash(awk '{print $5, $NF}')"
+    ]
+  }
+}
