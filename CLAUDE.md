@@ -54,6 +54,35 @@ core/                              ← router, cross-cutting utilities
 
 ---
 
+## Database (`lib/data/db/`)
+
+Schema-first drift. Tables live in `tables.dart`, the `@DriftDatabase` in
+`viby_database.dart`, and one DAO per concern under `daos/` (all reads are
+reactive `watch()` streams; multi-row writes run in transactions/batches).
+
+**ID strategy (deterministic string ids).** Track/album/artist primary keys are
+deterministic strings, never autoincrement:
+
+- local: `local:<mediaStoreId>`
+- subsonic: `subsonic:<serverId>:<remoteId>`
+
+A track carries its `albumId`/`artistId` as these same deterministic ids (plain
+keys, not enforced FKs — the scanner may write a track before its album/artist
+on a rescan; joins resolve by id). This makes rescans **idempotent upserts** (same
+id → update in place, never duplicate) and removes any need for cross-source join
+tables. Playlist ids are DAO-minted (`playlist:<micros>-<rand>`), not
+source-derived. Server passwords are **never** in the DB — they live in
+`flutter_secure_storage` keyed by the server row id.
+
+Foreign keys are ON (`PRAGMA foreign_keys`). Cascades: deleting a playlist
+removes its entries; deleting a track removes its history and cache entries.
+
+**Schema-change policy: any schema edit = a new migration + a migration test.**
+Bump `schemaVersion`, add an `if (from < N)` block in the `MigrationStrategy`
+`onUpgrade`, and add a test — never mutate an existing version's shape in place.
+
+---
+
 ## Commands
 
 | Task | Command |
@@ -99,10 +128,18 @@ fork of the discontinued `on_audio_query`. The original declares no Android
 `namespace` and fails to build under AGP 8; the fork is API-compatible
 (`OnAudioQuery()`) and AGP 8 clean. Keep using the fork.
 
+`MainActivity` **must** extend `AudioServiceActivity` (not the stock
+`FlutterActivity`) so the background audio handler and the UI share one cached
+`FlutterEngine`. With plain `FlutterActivity`, `AudioService.init()` throws
+"The Activity class declared in your AndroidManifest.xml is wrong…" at launch —
+a native-integration failure invisible to `flutter analyze` and unit tests.
+
 ---
 
 ## Current phase
 
-**Phase 0 — Scaffold.** Structure, config, and conventions only; no features.
-The app boots to a placeholder `HomeScreen` via go_router. Next phase: the
-`Track` model, the drift database, and the `player_service.dart` facade.
+**Phase 1 — Library foundations.** Done: the walking-skeleton audio pipeline
+(`audio_handler.dart` + `player_service.dart`, verified on-device with
+background playback) and **Step 1.1 — the drift database** (`lib/data/db/`:
+schema, six DAOs with reactive queries, in-memory tests). Next: the `Track`
+domain model + local-source scanner (1.2), then queue persistence (1.3).
