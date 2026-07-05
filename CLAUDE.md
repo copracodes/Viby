@@ -128,6 +128,14 @@ fork of the discontinued `on_audio_query`. The original declares no Android
 `namespace` and fails to build under AGP 8; the fork is API-compatible
 (`OnAudioQuery()`) and AGP 8 clean. Keep using the fork.
 
+**Its permission gate requires BOTH `READ_MEDIA_AUDIO` and `READ_MEDIA_IMAGES`
+on Android 13+** (hardcoded pair), and its `querySongs` no-permission path is
+buggy — it double-replies on the method channel and crashes the app *natively*
+(`IllegalStateException: Reply already submitted`). So: declare + request both
+permissions, and never call a query unless `permissionsStatus()` is true (the
+scanner guards on exactly this). Revisit if the fork narrows the requirement to
+audio-only.
+
 `MainActivity` **must** extend `AudioServiceActivity` (not the stock
 `FlutterActivity`) so the background audio handler and the UI share one cached
 `FlutterEngine`. With plain `FlutterActivity`, `AudioService.init()` throws
@@ -139,7 +147,10 @@ a native-integration failure invisible to `flutter analyze` and unit tests.
 ## Current phase
 
 **Phase 1 — Library foundations.** Done: the walking-skeleton audio pipeline
-(`audio_handler.dart` + `player_service.dart`, verified on-device with
-background playback) and **Step 1.1 — the drift database** (`lib/data/db/`:
-schema, six DAOs with reactive queries, in-memory tests). Next: the `Track`
-domain model + local-source scanner (1.2), then queue persistence (1.3).
+(`audio_handler.dart` + `player_service.dart`, verified on-device); **Step 1.1
+— the drift database** (`lib/data/db/`: schema, six reactive DAOs, in-memory
+tests); and **Step 1.2 — the local scanner** (`lib/data/sources/local/`:
+permission flow via `permission_handler`, deterministic-id mapping + junk
+filter, full/incremental scans with a cancelable `ScanProgress` stream, album
+artwork extraction, and a throwaway `/debug-scan` screen). Next: queue
+persistence + restore (1.3), then the real library UI.

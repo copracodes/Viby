@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
+import '../../core/router.dart';
 import '../../state/player_providers.dart';
 
 /// Home screen for the walking-skeleton phase.
@@ -16,7 +18,17 @@ class HomeScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final TextTheme text = Theme.of(context).textTheme;
     return Scaffold(
-      appBar: AppBar(title: const Text('Viby')),
+      appBar: AppBar(
+        title: const Text('Viby'),
+        actions: <Widget>[
+          // Temporary entry point to the throwaway scanner debug screen.
+          IconButton(
+            icon: const Icon(Icons.bug_report_outlined),
+            tooltip: 'Debug: library scan',
+            onPressed: () => context.push(AppRoutes.debugScan),
+          ),
+        ],
+      ),
       body: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,

@@ -202,4 +202,75 @@ class LibraryDao extends DatabaseAccessor<VibyDatabase>
   Future<int> deleteTrack(String id) {
     return (delete(tracks)..where((t) => t.id.equals(id))).go();
   }
+
+  Future<int> deleteTracks(List<String> ids) {
+    if (ids.isEmpty) return Future<int>.value(0);
+    return (delete(tracks)..where((t) => t.id.isIn(ids))).go();
+  }
+
+  // --- Scanner support ----------------------------------------------------
+
+  Future<int> trackCount() async {
+    final Expression<int> count = tracks.id.count();
+    final TypedResult row =
+        await (selectOnly(tracks)..addColumns(<Expression<Object>>[count]))
+            .getSingle();
+    return row.read(count) ?? 0;
+  }
+
+  /// Lightweight (id, dateModified, source) snapshot of every track — the input
+  /// the incremental scan diff compares MediaStore against.
+  Future<List<({String id, DateTime dateModified, TrackSource source})>>
+  trackSnapshots() async {
+    final List<TypedResult> rows = await (selectOnly(tracks)
+          ..addColumns(<Expression<Object>>[
+            tracks.id,
+            tracks.dateModified,
+            tracks.source,
+          ]))
+        .get();
+    return rows
+        .map(
+          (TypedResult r) => (
+            id: r.read(tracks.id)!,
+            dateModified: r.read(tracks.dateModified)!,
+            source: r.readWithConverter(tracks.source)!,
+          ),
+        )
+        .toList();
+  }
+
+  /// Recomputes `trackCount` for the given albums from the current tracks.
+  Future<void> recomputeAlbumTrackCounts(Set<String> albumIds) async {
+    if (albumIds.isEmpty) return;
+    final Expression<int> count = tracks.id.count();
+    final List<TypedResult> rows = await (selectOnly(tracks)
+          ..addColumns(<Expression<Object>>[tracks.albumId, count])
+          ..where(tracks.albumId.isIn(albumIds.toList()))
+          ..groupBy(<Expression<Object>>[tracks.albumId]))
+        .get();
+    final Map<String, int> counts = <String, int>{
+      for (final TypedResult r in rows) r.read(tracks.albumId)!: r.read(count) ?? 0,
+    };
+    await batch((Batch b) {
+      for (final String albumId in albumIds) {
+        b.update(
+          albums,
+          AlbumsCompanion(trackCount: Value(counts[albumId] ?? 0)),
+          where: ($AlbumsTable a) => a.id.equals(albumId),
+        );
+      }
+    });
+  }
+
+  /// Stamps an album and all its tracks with a resolved artwork key (called in
+  /// the scanner's artwork phase once the file is on disk).
+  Future<void> setAlbumArtwork(String albumId, String artworkKey) async {
+    await (update(albums)..where((t) => t.id.equals(albumId))).write(
+      AlbumsCompanion(artworkKey: Value(artworkKey)),
+    );
+    await (update(tracks)..where((t) => t.albumId.equals(albumId))).write(
+      TracksCompanion(artworkKey: Value(artworkKey)),
+    );
+  }
 }

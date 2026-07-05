@@ -20,6 +20,13 @@
          the granular media permission. -->
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
 
+    <!-- on_audio_query_pluse's permission gate requires BOTH READ_MEDIA_AUDIO
+         and READ_MEDIA_IMAGES on Android 13+ (it hardcodes the pair); without
+         images its querySongs path errors and the plugin double-replies,
+         crashing the app. So we must declare + request images too. Revisit if
+         the fork narrows this to audio-only. -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+
     <!-- Legacy storage read for Android 12L and below (API <= 32), where the
          granular READ_MEDIA_AUDIO permission does not exist. Capped with
          maxSdkVersion so it is not requested on 33+. -->
