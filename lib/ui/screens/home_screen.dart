@@ -21,11 +21,16 @@ class HomeScreen extends StatelessWidget {
       appBar: AppBar(
         title: const Text('Viby'),
         actions: <Widget>[
-          // Temporary entry point to the throwaway scanner debug screen.
+          // Temporary entry points to the throwaway debug screens.
           IconButton(
             icon: const Icon(Icons.bug_report_outlined),
             tooltip: 'Debug: library scan',
             onPressed: () => context.push(AppRoutes.debugScan),
+          ),
+          IconButton(
+            icon: const Icon(Icons.queue_music_outlined),
+            tooltip: 'Debug: queue',
+            onPressed: () => context.push(AppRoutes.debugQueue),
           ),
         ],
       ),

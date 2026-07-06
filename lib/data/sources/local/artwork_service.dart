@@ -36,6 +36,13 @@ class ArtworkService {
   Future<bool> hasArtwork(String artworkKey) async =>
       (await fileFor(artworkKey)).exists();
 
+  /// The on-disk artwork path for [artworkKey] if the file exists, else null.
+  /// Used to hand a resolved `file://` art URI to the media session.
+  Future<String?> resolvedPath(String artworkKey) async {
+    final File file = await fileFor(artworkKey);
+    return file.existsSync() ? file.path : null;
+  }
+
   /// Extracts album art for [mediaAlbumId] and writes it under [artworkKey],
   /// but only if not already on disk (keeps rescans cheap). Returns true if art
   /// exists on disk afterwards. Throws are the caller's to catch so one bad

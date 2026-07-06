@@ -1,5 +1,6 @@
 import 'package:go_router/go_router.dart';
 
+import '../ui/screens/debug_queue_screen.dart';
 import '../ui/screens/debug_scan_screen.dart';
 import '../ui/screens/home_screen.dart';
 
@@ -14,6 +15,9 @@ class AppRoutes {
 
   /// THROWAWAY debug route for the library scanner (Phase 1.2).
   static const String debugScan = '/debug-scan';
+
+  /// THROWAWAY debug route for the queue engine (Phase 1.3).
+  static const String debugQueue = '/debug-queue';
 }
 
 final GoRouter appRouter = GoRouter(
@@ -28,6 +32,11 @@ final GoRouter appRouter = GoRouter(
       path: AppRoutes.debugScan,
       name: 'debug-scan',
       builder: (context, state) => const DebugScanScreen(),
+    ),
+    GoRoute(
+      path: AppRoutes.debugQueue,
+      name: 'debug-queue',
+      builder: (context, state) => const DebugQueueScreen(),
     ),
   ],
 );

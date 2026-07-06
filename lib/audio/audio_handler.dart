@@ -10,10 +10,10 @@ import 'package:just_audio/just_audio.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
-/// Asset path of the bundled demo track for the walking-skeleton pipeline.
-const String _kSampleAsset = 'assets/sample.mp3';
+import '../data/db/tables.dart' show RepeatMode, TrackSource;
+import '../data/models/track.dart';
 
-/// Asset path of the placeholder cover art shown in the notification.
+/// Asset path of the placeholder cover art shown when a track has no artwork.
 const String _kPlaceholderArtAsset = 'assets/placeholder_art.png';
 
 /// Maps just_audio's [ProcessingState] onto audio_service's
@@ -26,6 +26,15 @@ const Map<ProcessingState, AudioProcessingState> _kProcessingStateMap =
       ProcessingState.ready: AudioProcessingState.ready,
       ProcessingState.completed: AudioProcessingState.completed,
     };
+
+/// Maps the Viby-domain [RepeatMode] onto just_audio's [LoopMode]. Auto-advance
+/// at the end of the queue is delegated to just_audio via this loop mode (the
+/// queue engine keeps its own index in sync from `currentIndexStream`).
+const Map<RepeatMode, LoopMode> _kLoopModeMap = <RepeatMode, LoopMode>{
+  RepeatMode.off: LoopMode.off,
+  RepeatMode.one: LoopMode.one,
+  RepeatMode.all: LoopMode.all,
+};
 
 /// Builds the audio_service [PlaybackState] that drives the system
 /// notification / lock screen from a snapshot of just_audio player state.
@@ -71,15 +80,29 @@ PlaybackState buildPlaybackState({
 /// media session (notification, lock screen, Bluetooth/media buttons) and the
 /// player. UI never touches this directly — it goes through `PlayerService`.
 ///
-/// Phase note: this is the walking skeleton. It loads one bundled asset and
-/// treats the queue as a single track, so skip-next / skip-previous are stubs.
-class VibyAudioHandler extends BaseAudioHandler
-    with QueueHandler, SeekHandler {
+/// It owns a real, mutable playlist: [loadQueue] (re)builds it, and the
+/// insert/remove/move/reorder methods mutate it *in place* (gapless — the
+/// playing item is never reloaded). It does NOT own queue order or shuffle —
+/// that's the queue engine's job; this handler just mirrors the order it's
+/// given and reports the playing index back via [currentIndexStream].
+///
+/// Shuffle is handled engine-side (we own the order), so just_audio's own
+/// shuffle is kept OFF and its `currentIndex` maps 1:1 onto our queue index.
+class VibyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   VibyAudioHandler() {
     _init();
   }
 
   final AudioPlayer _player = AudioPlayer();
+
+  /// Domain mirror of the loaded playlist, kept in lockstep with the player's
+  /// audio sources so [reorderQueue] can translate an order into moves and the
+  /// current-index listener can resolve the playing [MediaItem].
+  List<Track> _queue = <Track>[];
+  List<MediaItem> _items = <MediaItem>[];
+
+  /// Placeholder art URI (a real file) used when a track carries no artwork.
+  Uri? _placeholderArtUri;
 
   /// Whether playback was paused *by an audio interruption* (so we know to
   /// resume when a transient interruption ends).
@@ -92,9 +115,11 @@ class VibyAudioHandler extends BaseAudioHandler
   Stream<bool> get playingStream => _player.playingStream;
   Stream<ProcessingState> get processingStateStream =>
       _player.processingStateStream;
+  Stream<int?> get currentIndexStream => _player.currentIndexStream;
 
   Future<void> _init() async {
     await _configureAudioSession();
+    _placeholderArtUri = await _preparePlaceholderArt();
 
     // Rebroadcast a fresh PlaybackState whenever the player's event stream or
     // its playing flag changes. Both are needed: playbackEventStream covers
@@ -107,29 +132,12 @@ class VibyAudioHandler extends BaseAudioHandler
     );
     _player.playingStream.listen((_) => _broadcastState());
 
-    // Publish an initial MediaItem so the notification renders immediately,
-    // then enrich it with the real duration once the asset is decoded.
-    final Uri? artUri = await _preparePlaceholderArt();
-    MediaItem item = MediaItem(
-      id: _kSampleAsset,
-      title: 'Sample',
-      artist: 'Viby',
-      artUri: artUri,
-    );
-    mediaItem.add(item);
-    queue.add(<MediaItem>[item]);
-
-    try {
-      final Duration? duration = await _player.setAsset(_kSampleAsset);
-      if (duration != null) {
-        item = item.copyWith(duration: duration);
-        mediaItem.add(item);
-        queue.add(<MediaItem>[item]);
-      }
-    } catch (e, st) {
-      developer.log('failed to load $_kSampleAsset',
-          error: e, stackTrace: st);
-    }
+    // Follow auto-advance / media-session skips: when the playing item changes,
+    // surface its MediaItem so the notification shows the new track + art.
+    _player.currentIndexStream.listen((int? index) {
+      if (index != null) _publishCurrentMediaItem(index);
+      _broadcastState();
+    });
   }
 
   /// Copies the bundled placeholder art to a real file so the OS media session
@@ -211,7 +219,174 @@ class VibyAudioHandler extends BaseAudioHandler
     );
   }
 
-  // --- Transport controls (routed from notification, buttons, and UI) ---
+  // --- Queue mirror helpers ------------------------------------------------
+
+  /// Builds a just_audio [AudioSource] for [track], tagged with its [MediaItem]
+  /// so audio_service can surface it. This `switch` is the seam where subsonic
+  /// streaming slots in later.
+  AudioSource _buildSource(Track track) {
+    switch (track.source) {
+      case TrackSource.local:
+        final String? path = track.filePath;
+        if (path == null) {
+          throw StateError('local track ${track.id} has no filePath');
+        }
+        return AudioSource.file(path, tag: _mediaItemFor(track));
+      case TrackSource.subsonic:
+        // SEAM (Phase 2): build AudioSource.uri(streamUrl, headers: auth) from
+        // the server config + track.remoteId here.
+        throw UnimplementedError(
+          'subsonic playback is not implemented yet (track ${track.id})',
+        );
+    }
+  }
+
+  MediaItem _mediaItemFor(Track track) {
+    final String? artPath = track.artworkPath;
+    return MediaItem(
+      id: track.id,
+      title: track.title,
+      artist: track.artistName,
+      album: track.albumName,
+      duration: track.durationMs > 0
+          ? Duration(milliseconds: track.durationMs)
+          : null,
+      artUri: artPath != null ? File(artPath).uri : _placeholderArtUri,
+    );
+  }
+
+  /// Republishes the whole queue and the current item to audio_service.
+  void _refreshQueueBroadcast() {
+    queue.add(List<MediaItem>.of(_items));
+    final int? index = _player.currentIndex;
+    if (index != null) _publishCurrentMediaItem(index);
+  }
+
+  void _publishCurrentMediaItem(int index) {
+    if (index >= 0 && index < _items.length) mediaItem.add(_items[index]);
+  }
+
+  // --- Queue operations (driven by PlayerService / the queue engine) -------
+
+  /// Replaces the whole queue and (re)loads the player at [initialIndex],
+  /// seeked to [initialPosition]. Starts playing iff [autoPlay].
+  Future<void> loadQueue(
+    List<Track> tracks, {
+    int initialIndex = 0,
+    Duration initialPosition = Duration.zero,
+    bool autoPlay = false,
+  }) async {
+    _queue = List<Track>.of(tracks);
+    _items = _queue.map(_mediaItemFor).toList();
+    queue.add(List<MediaItem>.of(_items));
+
+    if (_queue.isEmpty) {
+      await _player.stop();
+      mediaItem.add(null);
+      return;
+    }
+
+    final int idx = initialIndex.clamp(0, _queue.length - 1);
+    _publishCurrentMediaItem(idx);
+
+    // just_audio's own shuffle stays OFF — the engine owns order.
+    await _player.setShuffleModeEnabled(false);
+    try {
+      await _player.setAudioSources(
+        _queue.map(_buildSource).toList(),
+        initialIndex: idx,
+        initialPosition: initialPosition,
+      );
+    } catch (e, st) {
+      developer.log('failed to load queue', error: e, stackTrace: st);
+      return;
+    }
+    if (autoPlay) await _player.play();
+  }
+
+  Future<void> insertTrack(int index, Track track) async {
+    _queue.insert(index, track);
+    _items.insert(index, _mediaItemFor(track));
+    await _player.insertAudioSource(index, _buildSource(track));
+    _refreshQueueBroadcast();
+  }
+
+  Future<void> insertTracks(int index, List<Track> tracks) async {
+    if (tracks.isEmpty) return;
+    _queue.insertAll(index, tracks);
+    _items.insertAll(index, tracks.map(_mediaItemFor));
+    await _player.insertAudioSources(
+      index,
+      tracks.map(_buildSource).toList(),
+    );
+    _refreshQueueBroadcast();
+  }
+
+  Future<void> removeTrackAt(int index) async {
+    if (index < 0 || index >= _queue.length) return;
+    _queue.removeAt(index);
+    _items.removeAt(index);
+    await _player.removeAudioSourceAt(index);
+    if (_queue.isEmpty) mediaItem.add(null);
+    _refreshQueueBroadcast();
+  }
+
+  /// In-place move; [to] is the index in the list *after* removal (matches
+  /// just_audio's `moveAudioSource`).
+  Future<void> moveTrack(int from, int to) async {
+    if (from == to) return;
+    final Track t = _queue.removeAt(from);
+    _queue.insert(to, t);
+    final MediaItem it = _items.removeAt(from);
+    _items.insert(to, it);
+    await _player.moveAudioSource(from, to);
+    _refreshQueueBroadcast();
+  }
+
+  /// Reorders the loaded playlist to match [newOrder] (a permutation of the
+  /// current queue) via a sequence of in-place moves, so the currently-playing
+  /// item is never reloaded. Selection-sort by id: O(n) move calls.
+  Future<void> reorderQueue(List<Track> newOrder) async {
+    for (int i = 0; i < newOrder.length && i < _queue.length; i++) {
+      if (_queue[i].id == newOrder[i].id) continue;
+      int from = -1;
+      for (int j = i + 1; j < _queue.length; j++) {
+        if (_queue[j].id == newOrder[i].id) {
+          from = j;
+          break;
+        }
+      }
+      if (from == -1) continue; // not a permutation — skip defensively.
+      final Track t = _queue.removeAt(from);
+      _queue.insert(i, t);
+      final MediaItem it = _items.removeAt(from);
+      _items.insert(i, it);
+      await _player.moveAudioSource(from, i);
+    }
+    _refreshQueueBroadcast();
+  }
+
+  Future<void> skipToIndex(int index) async {
+    if (index < 0 || index >= _queue.length) return;
+    await _player.seek(Duration.zero, index: index);
+  }
+
+  Future<void> clearQueue() async {
+    _queue = <Track>[];
+    _items = <MediaItem>[];
+    await _player.stop();
+    await _player.clearAudioSources();
+    queue.add(<MediaItem>[]);
+    mediaItem.add(null);
+  }
+
+  /// Applies the queue's [RepeatMode] as a just_audio loop mode. Named to avoid
+  /// clashing with [BaseAudioHandler.setRepeatMode] (the media-session callback,
+  /// which takes an [AudioServiceRepeatMode]).
+  Future<void> applyRepeatMode(RepeatMode mode) =>
+      _player.setLoopMode(_kLoopModeMap[mode]!);
+
+  // --- Transport controls (routed from notification, buttons, and UI) ------
 
   @override
   Future<void> play() => _player.play();
@@ -229,14 +404,20 @@ class VibyAudioHandler extends BaseAudioHandler
   }
 
   @override
-  Future<void> skipToNext() async {
-    // Single-track walking skeleton — no queue navigation yet.
-    developer.log('skipToNext: single-track skeleton, ignored');
-  }
+  Future<void> skipToQueueItem(int index) => skipToIndex(index);
+
+  @override
+  Future<void> skipToNext() => _player.seekToNext();
 
   @override
   Future<void> skipToPrevious() async {
-    developer.log('skipToPrevious: single-track skeleton, ignored');
+    // Standard player behaviour: if we're more than 3s into the track, restart
+    // it rather than jumping to the previous one.
+    if (_player.position > const Duration(seconds: 3)) {
+      await _player.seek(Duration.zero);
+    } else {
+      await _player.seekToPrevious();
+    }
   }
 
   /// Releases the underlying player. Called when the whole handler is torn down.

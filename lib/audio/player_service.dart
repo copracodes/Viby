@@ -2,7 +2,10 @@ import 'dart:async';
 
 import 'package:just_audio/just_audio.dart' show ProcessingState;
 
+import '../data/db/tables.dart' show RepeatMode;
+import '../data/models/track.dart';
 import 'audio_handler.dart';
+import 'queue_playback_sink.dart';
 
 /// Playback processing state, expressed as a Viby-domain enum so that UI and
 /// state layers can react to it without importing just_audio / audio_service
@@ -46,20 +49,76 @@ VibyProcessingState _mapProcessingState(ProcessingState state) {
 /// small surface of methods and streams. It delegates transport to the
 /// [VibyAudioHandler] (which owns the OS media session) and shapes the handler's
 /// raw streams for consumption (throttling position, mapping to domain types).
-class PlayerService {
+class PlayerService implements QueuePlaybackSink {
   PlayerService(this._handler);
 
   final VibyAudioHandler _handler;
 
   // --- Transport ---
 
+  @override
   Future<void> play() => _handler.play();
 
+  @override
   Future<void> pause() => _handler.pause();
 
+  @override
   Future<void> seek(Duration position) => _handler.seek(position);
 
+  // --- Queue engine sink (drives the handler's mutable playlist) ---
+
+  @override
+  Future<void> loadQueue(
+    List<Track> tracks, {
+    int initialIndex = 0,
+    Duration initialPosition = Duration.zero,
+    bool autoPlay = false,
+  }) =>
+      _handler.loadQueue(
+        tracks,
+        initialIndex: initialIndex,
+        initialPosition: initialPosition,
+        autoPlay: autoPlay,
+      );
+
+  @override
+  Future<void> insertTrack(int index, Track track) =>
+      _handler.insertTrack(index, track);
+
+  @override
+  Future<void> insertTracks(int index, List<Track> tracks) =>
+      _handler.insertTracks(index, tracks);
+
+  @override
+  Future<void> removeTrackAt(int index) => _handler.removeTrackAt(index);
+
+  @override
+  Future<void> moveTrack(int from, int to) => _handler.moveTrack(from, to);
+
+  @override
+  Future<void> reorderQueue(List<Track> newOrder) =>
+      _handler.reorderQueue(newOrder);
+
+  @override
+  Future<void> skipToIndex(int index) => _handler.skipToIndex(index);
+
+  @override
+  Future<void> skipToNext() => _handler.skipToNext();
+
+  @override
+  Future<void> skipToPrevious() => _handler.skipToPrevious();
+
+  @override
+  Future<void> clearQueue() => _handler.clearQueue();
+
+  @override
+  Future<void> setRepeatMode(RepeatMode mode) => _handler.applyRepeatMode(mode);
+
   // --- Streams ---
+
+  /// The currently-playing queue index (null when idle/empty).
+  @override
+  Stream<int?> get currentIndexStream => _handler.currentIndexStream;
 
   /// Current playback position, throttled to at most one event per 200ms so
   /// the UI (slider / position label) rebuilds at a sane cadence.

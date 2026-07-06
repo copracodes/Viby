@@ -83,6 +83,15 @@
             </intent-filter>
         </receiver>
 
+        <!-- Fall back to the Skia rendering backend. On this device's Vulkan
+             driver (Flutter 3.41 / Impeller-Vulkan) Material icon-font glyphs
+             render as ".notdef" tofu boxes and the InkSparkle shader asset is
+             reported missing. Skia renders them correctly. Revisit (remove this
+             flag) once Impeller/Vulkan glyph rendering is fixed for this GPU. -->
+        <meta-data
+            android:name="io.flutter.embedding.android.EnableImpeller"
+            android:value="false" />
+
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

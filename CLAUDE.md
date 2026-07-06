@@ -149,8 +149,16 @@ a native-integration failure invisible to `flutter analyze` and unit tests.
 **Phase 1 — Library foundations.** Done: the walking-skeleton audio pipeline
 (`audio_handler.dart` + `player_service.dart`, verified on-device); **Step 1.1
 — the drift database** (`lib/data/db/`: schema, six reactive DAOs, in-memory
-tests); and **Step 1.2 — the local scanner** (`lib/data/sources/local/`:
+tests); **Step 1.2 — the local scanner** (`lib/data/sources/local/`:
 permission flow via `permission_handler`, deterministic-id mapping + junk
 filter, full/incremental scans with a cancelable `ScanProgress` stream, album
-artwork extraction, and a throwaway `/debug-scan` screen). Next: queue
-persistence + restore (1.3), then the real library UI.
+artwork extraction, and a throwaway `/debug-scan` screen); and **Step 1.3 — the
+queue engine** — the `Track` domain model (`lib/data/models/track.dart`); a real
+gapless playlist in the handler (in-place insert/remove/move via just_audio's
+player-level playlist API — `ConcatenatingAudioSource` itself is deprecated in
+the pinned 0.10.6); `QueueController` (`lib/state/queue_provider.dart`) owning
+order/shuffle/repeat with pure, unit-tested index math (shuffle is engine-side —
+just_audio's own shuffle stays OFF); debounced persistence + cold-start restore
+(`queue_persistence.dart`, tolerant of deleted tracks); and a throwaway
+`/debug-queue` screen. Restore is guarded so it can never block boot. Next: the
+real library + player/queue UI (replacing the `/debug-*` screens).

@@ -183,6 +183,30 @@ class LibraryDao extends DatabaseAccessor<VibyDatabase>
     );
   }
 
+  /// One-shot fetch of specific tracks (+ resolved album/artist names) by id.
+  /// Order is NOT guaranteed — callers re-order by their id list. This is a
+  /// deliberate `get()` (not a `watch()`): it backs a one-time bootstrap
+  /// (queue restore), not reactive list/detail UI.
+  Future<List<TrackWithMeta>> getTracksByIds(List<String> ids) async {
+    if (ids.isEmpty) return <TrackWithMeta>[];
+    final JoinedSelectStatement<HasResultSet, dynamic> statement =
+        select(tracks).join(<Join<HasResultSet, dynamic>>[
+          leftOuterJoin(albums, albums.id.equalsExp(tracks.albumId)),
+          leftOuterJoin(artists, artists.id.equalsExp(tracks.artistId)),
+        ])
+          ..where(tracks.id.isIn(ids));
+    final List<TypedResult> rows = await statement.get();
+    return rows
+        .map(
+          (TypedResult row) => TrackWithMeta(
+            track: row.readTable(tracks),
+            albumName: row.readTableOrNull(albums)?.name,
+            artistName: row.readTableOrNull(artists)?.name,
+          ),
+        )
+        .toList();
+  }
+
   // --- Writes (idempotent upserts for the scanner) ------------------------
 
   /// Idempotent batch upsert keyed by the deterministic `id`: re-scanning the
