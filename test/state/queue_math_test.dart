@@ -34,6 +34,53 @@ void main() {
     });
   });
 
+  group('QueueState.hasNext / hasPrevious (transport affordance)', () {
+    QueueState state(
+      int count, {
+      required int index,
+      RepeatMode repeat = RepeatMode.off,
+    }) =>
+        QueueState(
+          tracks: <Track>[for (int i = 0; i < count; i++) _t('$i')],
+          currentIndex: index,
+          shuffleOn: false,
+          repeatMode: repeat,
+        );
+
+    test('single-track queue, repeat off: no next, no previous', () {
+      final QueueState s = state(1, index: 0);
+      expect(s.hasNext, isFalse);
+      expect(s.hasPrevious, isFalse);
+    });
+
+    test('single-track queue, repeat all: next and previous wrap', () {
+      final QueueState s = state(1, index: 0, repeat: RepeatMode.all);
+      expect(s.hasNext, isTrue);
+      expect(s.hasPrevious, isTrue);
+    });
+
+    test('multi-track, repeat off: bounded at the ends', () {
+      expect(state(3, index: 0).hasPrevious, isFalse);
+      expect(state(3, index: 0).hasNext, isTrue);
+      expect(state(3, index: 2).hasNext, isFalse);
+      expect(state(3, index: 2).hasPrevious, isTrue);
+      expect(state(3, index: 1).hasNext, isTrue);
+      expect(state(3, index: 1).hasPrevious, isTrue);
+    });
+
+    test('repeat one: always has next and previous (pins to current)', () {
+      final QueueState s = state(3, index: 2, repeat: RepeatMode.one);
+      expect(s.hasNext, isTrue);
+      expect(s.hasPrevious, isTrue);
+    });
+
+    test('empty queue: neither', () {
+      const QueueState s = QueueState.empty();
+      expect(s.hasNext, isFalse);
+      expect(s.hasPrevious, isFalse);
+    });
+  });
+
   group('buildRestoredQueue (restore drops missing ids + clamps index)', () {
     Map<String, Track> byId(String ids) =>
         <String, Track>{for (final String id in ids.split('')) id: _t(id)};

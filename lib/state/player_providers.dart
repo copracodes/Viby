@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
+import '../audio/playback_fault.dart';
 import '../audio/player_service.dart';
 
 part 'player_providers.g.dart';
@@ -29,6 +30,11 @@ Stream<bool> playing(Ref ref) =>
 Stream<Duration> position(Ref ref) =>
     ref.watch(playerServiceProvider).position;
 
+/// Buffered position (throttled), for the progress bar's secondary track.
+@riverpod
+Stream<Duration> bufferedPosition(Ref ref) =>
+    ref.watch(playerServiceProvider).bufferedPosition;
+
 /// Duration of the loaded track; null until the source is decoded.
 @riverpod
 Stream<Duration?> trackDuration(Ref ref) =>
@@ -38,3 +44,8 @@ Stream<Duration?> trackDuration(Ref ref) =>
 @riverpod
 Stream<VibyProcessingState> processingState(Ref ref) =>
     ref.watch(playerServiceProvider).processingState;
+
+/// Playback faults (missing / corrupt files). The fault reporter listens.
+@riverpod
+Stream<PlaybackFault> playbackFaults(Ref ref) =>
+    ref.watch(playerServiceProvider).faults;

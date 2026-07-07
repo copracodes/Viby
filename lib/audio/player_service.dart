@@ -5,6 +5,7 @@ import 'package:just_audio/just_audio.dart' show ProcessingState;
 import '../data/db/tables.dart' show RepeatMode;
 import '../data/models/track.dart';
 import 'audio_handler.dart';
+import 'playback_fault.dart';
 import 'queue_playback_sink.dart';
 
 /// Playback processing state, expressed as a Viby-domain enum so that UI and
@@ -125,6 +126,13 @@ class PlayerService implements QueuePlaybackSink {
   Stream<Duration> get position =>
       _throttleTrailing(_handler.positionStream, const Duration(milliseconds: 200));
 
+  /// How much of the current track has buffered (drives the progress bar's
+  /// secondary track). Throttled like [position].
+  Stream<Duration> get bufferedPosition => _throttleTrailing(
+        _handler.bufferedPositionStream,
+        const Duration(milliseconds: 200),
+      );
+
   /// Duration of the loaded track; null until the source is decoded.
   Stream<Duration?> get duration => _handler.durationStream;
 
@@ -134,6 +142,11 @@ class PlayerService implements QueuePlaybackSink {
   /// The processing state, as a Viby-domain enum.
   Stream<VibyProcessingState> get processingState =>
       _handler.processingStateStream.map(_mapProcessingState);
+
+  /// Emits when a track can't be played (missing / corrupt file). The state
+  /// layer reacts by marking it unplayable and showing a "skipped" message; the
+  /// handler has already routed playback around it.
+  Stream<PlaybackFault> get faults => _handler.faultStream;
 
   /// Releases underlying resources. In practice the handler lives for the whole
   /// app session, so this is mainly for symmetry / tests.

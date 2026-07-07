@@ -5,6 +5,7 @@ import 'package:drift/drift.dart';
 import '../tables.dart';
 import '../util/stream_combine.dart';
 import '../viby_database.dart';
+import 'library_dao.dart';
 
 part 'playlist_dao.g.dart';
 
@@ -16,9 +17,48 @@ class PlaylistWithTracks {
   final List<TrackRow> tracks;
 }
 
+/// A playlist with its tracks (+ resolved album/artist names) in position
+/// order — the shape the playlist-detail screen renders.
+class PlaylistWithMeta {
+  const PlaylistWithMeta({required this.playlist, required this.tracks});
+
+  final PlaylistRow playlist;
+  final List<TrackWithMeta> tracks;
+}
+
+/// A playlist plus the derived data the grid card needs: how many (resolvable)
+/// tracks it holds and up to four distinct album-art keys for the collage.
+class PlaylistSummary {
+  const PlaylistSummary({
+    required this.playlist,
+    required this.trackCount,
+    required this.artworkKeys,
+  });
+
+  final PlaylistRow playlist;
+  final int trackCount;
+  final List<String> artworkKeys;
+}
+
+/// Picks up to [max] distinct, non-empty artwork keys from [keysInOrder]
+/// (position order), preserving first-seen order — the 2×2 collage source.
+/// Pure so the collage rule is unit-testable.
+List<String> pickCollageKeys(List<String?> keysInOrder, {int max = 4}) {
+  final List<String> result = <String>[];
+  final Set<String> seen = <String>{};
+  for (final String? key in keysInOrder) {
+    if (key == null || key.isEmpty) continue;
+    if (seen.add(key)) result.add(key);
+    if (result.length >= max) break;
+  }
+  return result;
+}
+
 /// Playlists and their ordered entries. Position is kept dense (0..n-1); all
 /// multi-row mutations run in a transaction.
-@DriftAccessor(tables: <Type>[Playlists, PlaylistEntries, Tracks])
+@DriftAccessor(
+  tables: <Type>[Playlists, PlaylistEntries, Tracks, Albums, Artists],
+)
 class PlaylistDao extends DatabaseAccessor<VibyDatabase>
     with _$PlaylistDaoMixin {
   PlaylistDao(super.db);
@@ -60,6 +100,129 @@ class PlaylistDao extends DatabaseAccessor<VibyDatabase>
           ? null
           : PlaylistWithTracks(playlist: playlist, tracks: rows),
     );
+  }
+
+  /// Every playlist (newest-modified first) with its track count and collage
+  /// keys — the Playlists grid. One reactive join, grouped in Dart. Entries
+  /// whose track has been pruned are ignored (matches the inner-joined detail).
+  Stream<List<PlaylistSummary>> watchPlaylistSummaries() {
+    final JoinedSelectStatement<HasResultSet, dynamic> query =
+        select(playlists).join(<Join<HasResultSet, dynamic>>[
+          leftOuterJoin(
+            playlistEntries,
+            playlistEntries.playlistId.equalsExp(playlists.id),
+          ),
+          leftOuterJoin(tracks, tracks.id.equalsExp(playlistEntries.trackId)),
+        ])
+          ..orderBy(<OrderingTerm>[
+            OrderingTerm(
+              expression: playlists.dateModified,
+              mode: OrderingMode.desc,
+            ),
+            OrderingTerm(expression: playlistEntries.position),
+          ]);
+    return query.watch().map((List<TypedResult> rows) {
+      // Insertion order follows dateModified desc (first row per playlist).
+      final Map<String, _SummaryAccumulator> byId =
+          <String, _SummaryAccumulator>{};
+      for (final TypedResult row in rows) {
+        final PlaylistRow playlist = row.readTable(playlists);
+        final _SummaryAccumulator acc = byId.putIfAbsent(
+          playlist.id,
+          () => _SummaryAccumulator(playlist),
+        );
+        final TrackRow? track = row.readTableOrNull(tracks);
+        if (track != null) {
+          acc.count++;
+          acc.artworkKeys.add(track.artworkKey);
+        }
+      }
+      return byId.values
+          .map(
+            (_SummaryAccumulator a) => PlaylistSummary(
+              playlist: a.playlist,
+              trackCount: a.count,
+              artworkKeys: pickCollageKeys(a.artworkKeys),
+            ),
+          )
+          .toList();
+    });
+  }
+
+  /// Playlist + its tracks (with album/artist names) in position order. Null
+  /// while the id is unknown; re-emits as either side changes.
+  Stream<PlaylistWithMeta?> watchPlaylistWithMeta(String id) {
+    final Stream<PlaylistRow?> playlistStream =
+        (select(playlists)..where((t) => t.id.equals(id)))
+            .watchSingleOrNull();
+    final JoinedSelectStatement<HasResultSet, dynamic> entriesQuery =
+        select(playlistEntries).join(<Join<HasResultSet, dynamic>>[
+          innerJoin(tracks, tracks.id.equalsExp(playlistEntries.trackId)),
+          leftOuterJoin(albums, albums.id.equalsExp(tracks.albumId)),
+          leftOuterJoin(artists, artists.id.equalsExp(tracks.artistId)),
+        ])
+          ..where(playlistEntries.playlistId.equals(id))
+          ..orderBy(<OrderingTerm>[
+            OrderingTerm(expression: playlistEntries.position),
+          ]);
+    final Stream<List<TrackWithMeta>> tracksStream = entriesQuery.watch().map(
+      (List<TypedResult> rows) => rows
+          .map(
+            (TypedResult r) => TrackWithMeta(
+              track: r.readTable(tracks),
+              albumName: r.readTableOrNull(albums)?.name,
+              artistName: r.readTableOrNull(artists)?.name,
+            ),
+          )
+          .toList(),
+    );
+    return combineLatest2<PlaylistRow?, List<TrackWithMeta>, PlaylistWithMeta?>(
+      playlistStream,
+      tracksStream,
+      (PlaylistRow? playlist, List<TrackWithMeta> rows) => playlist == null
+          ? null
+          : PlaylistWithMeta(playlist: playlist, tracks: rows),
+    );
+  }
+
+  /// The set of playlist ids that currently contain [trackId] — powers the
+  /// checkmarks in the "Add to playlist" sheet.
+  Stream<Set<String>> watchPlaylistIdsContaining(String trackId) {
+    return (selectOnly(playlistEntries, distinct: true)
+          ..addColumns(<Expression<Object>>[playlistEntries.playlistId])
+          ..where(playlistEntries.trackId.equals(trackId)))
+        .watch()
+        .map(
+          (List<TypedResult> rows) => rows
+              .map((TypedResult r) => r.read(playlistEntries.playlistId)!)
+              .toSet(),
+        );
+  }
+
+  /// Toggles [trackId]'s membership in [playlistId]: appends it if absent
+  /// (returns true), or removes every occurrence and re-compacts if present
+  /// (returns false). Existing order is otherwise untouched.
+  Future<bool> toggleTrack(String playlistId, String trackId) async {
+    final List<PlaylistEntryRow> existing = await (select(playlistEntries)
+          ..where(
+            (t) => t.playlistId.equals(playlistId) & t.trackId.equals(trackId),
+          ))
+        .get();
+    if (existing.isEmpty) {
+      await addTracks(playlistId, <String>[trackId]);
+      return true;
+    }
+    await transaction(() async {
+      await (delete(playlistEntries)
+            ..where(
+              (t) =>
+                  t.playlistId.equals(playlistId) & t.trackId.equals(trackId),
+            ))
+          .go();
+      await _recompact(playlistId);
+      await _touch(playlistId);
+    });
+    return false;
   }
 
   /// Creates a playlist and returns its freshly-minted id.
@@ -195,4 +358,13 @@ class PlaylistDao extends DatabaseAccessor<VibyDatabase>
       PlaylistsCompanion(dateModified: Value(DateTime.now())),
     );
   }
+}
+
+/// Mutable per-playlist accumulator used while folding the summaries join.
+class _SummaryAccumulator {
+  _SummaryAccumulator(this.playlist);
+
+  final PlaylistRow playlist;
+  int count = 0;
+  final List<String?> artworkKeys = <String?>[];
 }

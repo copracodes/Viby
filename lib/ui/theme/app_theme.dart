@@ -23,6 +23,11 @@ class AppTheme {
       useMaterial3: true,
       colorScheme: scheme,
       scaffoldBackgroundColor: scheme.surface,
+      // Use the classic ink ripple rather than Material 3's default InkSparkle:
+      // InkSparkle needs a runtime shader (`ink_sparkle.frag`) that fails to load
+      // on this device's Vulkan driver and in widget tests. InkRipple looks
+      // nearly identical and is shader-free.
+      splashFactory: InkRipple.splashFactory,
     );
   }
 }

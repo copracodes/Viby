@@ -10,6 +10,7 @@ import 'daos/history_dao.dart';
 import 'daos/library_dao.dart';
 import 'daos/playlist_dao.dart';
 import 'daos/queue_dao.dart';
+import 'daos/search_dao.dart';
 import 'daos/server_dao.dart';
 import 'tables.dart';
 
@@ -31,6 +32,7 @@ part 'viby_database.g.dart';
     Servers,
     CacheEntries,
     QueueState,
+    Searches,
   ],
   daos: <Type>[
     LibraryDao,
@@ -39,6 +41,7 @@ part 'viby_database.g.dart';
     QueueDao,
     CacheDao,
     ServerDao,
+    SearchDao,
   ],
 )
 class VibyDatabase extends _$VibyDatabase {
@@ -50,7 +53,7 @@ class VibyDatabase extends _$VibyDatabase {
   VibyDatabase.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 3;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -64,10 +67,19 @@ class VibyDatabase extends _$VibyDatabase {
       );
     },
     onUpgrade: (Migrator m, int from, int to) async {
-      // SCHEMA-CHANGE POLICY: the schema is at v1. To change it, bump
-      // `schemaVersion`, add an `if (from < N) { ... }` block here performing
-      // the incremental migration, and add a matching migration test. Never
-      // edit v1's shape in place. (Mirrored in CLAUDE.md.)
+      // SCHEMA-CHANGE POLICY: bump `schemaVersion`, add an `if (from < N)`
+      // block here performing the incremental migration, and add a matching
+      // migration test. Never edit an existing version's shape in place.
+      // (Mirrored in CLAUDE.md.)
+
+      // v1 → v2: recent-searches table.
+      if (from < 2) {
+        await m.createTable(searches);
+      }
+      // v2 → v3: per-track `playable` flag (defaults true for existing rows).
+      if (from < 3) {
+        await m.addColumn(tracks, tracks.playable);
+      }
     },
     beforeOpen: (OpeningDetails details) async {
       // Enforce foreign keys (off by default in SQLite) so the cascade

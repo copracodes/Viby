@@ -112,6 +112,16 @@ Bump `schemaVersion`, add an `if (from < N)` block in the `MigrationStrategy`
   types explicitly; no `dynamic` calls (`avoid_dynamic_calls`).
 - **Theme, don't hard-code.** Colours/typography come from `ui/theme/app_theme.dart`
   via `Theme.of(context)`.
+- **Unknown metadata has one display rule.** MediaStore reports missing
+  artist/album as the literal `<unknown>` (and null/empty happens too). Never
+  format these inline — use the `DisplayNames` extension in
+  `lib/core/display_names.dart` (`name.artistOrUnknown` / `name.albumOrUnknown`)
+  everywhere a name is shown, so "Unknown artist" / "Unknown album" is defined
+  in exactly one place.
+- **Artwork renders through one widget.** All album art goes through
+  `ui/widgets/album_art.dart` (`AlbumArt` / `AlbumArt.expand`), which resolves the
+  on-disk file from `artworkKey` and falls back to a placeholder. Don't build
+  `Image.file` paths in screens.
 
 ---
 
@@ -160,5 +170,97 @@ the pinned 0.10.6); `QueueController` (`lib/state/queue_provider.dart`) owning
 order/shuffle/repeat with pure, unit-tested index math (shuffle is engine-side —
 just_audio's own shuffle stays OFF); debounced persistence + cold-start restore
 (`queue_persistence.dart`, tolerant of deleted tracks); and a throwaway
-`/debug-queue` screen. Restore is guarded so it can never block boot. Next: the
-real library + player/queue UI (replacing the `/debug-*` screens).
+`/debug-queue` screen. Restore is guarded so it can never block boot.
+
+**Step 1.4 (Session A) — the UI shell + library browsing** is built: a
+`StatefulShellRoute` bottom nav (Home / Library / Search / Settings) with a
+persistent mini-player docked above it (`ui/shell/app_shell.dart`,
+`ui/widgets/mini_player.dart`); Library tabs (Albums grid, Artists, Tracks,
+Playlists-placeholder) with album/artist detail and tap-to-play wiring; Home
+(recently played/added + scan CTA); debounced Search; Settings (rescan, theme
+stub, Developer section housing the `/debug-*` tools, About). A `HistoryRecorder`
+logs plays so "recently played" fills. The Impeller opt-out from Phase 1.3 pairs
+with `splashFactory: InkRipple` in the theme (InkSparkle needs a shader that
+fails on this device / in tests). Analyze clean; 72 tests green (widget tests for
+the album grid, album-detail play wiring, mini-player, and the unknown-name
+rule).
+
+**Step 1.4 (Session B) — the basic Now Playing screen** is built
+(`ui/screens/now_playing_screen.dart`): a full-screen modal route
+(`fullscreenDialog`, opened by the mini-player tap) with large flexible artwork,
+title/artist, an `audio_video_progress_bar` scrubber wired to
+position/buffered/duration (a `bufferedPosition` stream was added to the facade),
+a transport row (shuffle / prev / play-pause / next / repeat) with active-state
+colours driving `QueueController`, a queue button opening a bottom sheet that
+reuses the shared `QueueListView` (`ui/widgets/queue_list.dart`, also used by
+`/debug-queue`), and simple swipe-down-to-dismiss. Intentionally plain — Phase 2
+adds the gesture/animation treatment. A later pass added **transport
+affordances**: `QueueState.hasNext`/`hasPrevious` (repeat-aware) dim Next at the
+end of the queue and Previous when there's no prior track *and* position < 3s (in
+both Now Playing and the mini-player, which gained a Next button), plus a
+"N of M" queue-position indicator.
+
+**Step 1.5 — playlists, play tracking, search recents** completes Phase 1's
+functional feature set:
+- **Playlists.** `PlaylistDao` gained `watchPlaylistSummaries` (grid cards:
+  count + 2×2 collage via the pure `pickCollageKeys` = first 4 distinct arts),
+  `watchPlaylistWithMeta` (detail), `watchPlaylistIdsContaining` +
+  `toggleTrack` (add-to-playlist checkmarks). UI: Library › Playlists tab
+  (grid + New-playlist dialog), `playlist_detail_screen.dart` (collage header,
+  play/shuffle, reorder, swipe-remove, rename/delete-with-confirm), the enabled
+  "Add to playlist" track sheet (`ui/widgets/add_to_playlist.dart`), and an
+  album-detail overflow "Add album to playlist". Route `/library/playlist/:id`.
+- **Play tracking.** `HistoryRecorder` was rewritten to record **once per
+  index-session** at ≥80% position OR completion, driven by the
+  position/index/duration/processingState streams (not UI events) — seek-back
+  never double-counts, a track skipped before 80% is never logged.
+- **Search recents.** New `Searches` table (**schema v2**: bumped
+  `schemaVersion`, `onUpgrade` `createTable`, migration test) + `SearchDao`
+  (record-on-result-tap, newest-10, clear-all; drift stores `DateTime` at
+  1-second resolution, so `recordSearch` takes a test-only `at`). Search screen
+  shows recent-term chips when the field is empty.
+
+93 tests green (added: v1→v2 migration, SearchDao prune/order/clear, playlist
+collage + toggle + containment, the 80% play-tracking rule).
+
+**Step 1.6 — hardening (closes Phase 1).** Resilience + correctness at scale,
+no new features:
+- **Legacy tag encoding (mojibake repair).** `core/tag_encoding.dart` is a pure
+  module: an embedded Windows-1256 (CP1256) table, `decodeCp1256`, a
+  `looksSuspicious` pre-filter, and `bestDecoding` — a scoring heuristic that
+  reinterprets a Latin-1-decoded string as CP1256 and keeps it only when it
+  surfaces Arabic without adding garbage (clean ASCII/UTF-8 passes through
+  untouched). `sources/local/id3_reader.dart` is a dependency-free ID3v1/v2.2/
+  v2.3/v2.4 reader that returns Latin-1 frames byte-for-byte (so the CP1256
+  bytes survive for re-decode) — chosen over the `audiotags` plugin for build
+  robustness on this device + full unit-testability. `sources/local/
+  tag_repair_service.dart` sweeps the DB: string re-decode first (fixes the
+  common MediaStore-decoded-as-Latin1 case with no I/O), then a file re-read via
+  a `RawTagReader` for lossy `?`/U+FFFD titles. Runs as a post-scan `ScanPhase.
+  repair` (so **Settings › Rescan** repairs; progress reported). Files on disk
+  are never modified; only DB rows change.
+- **Scale (10k).** A debug `LibrarySeeder` (Settings › Developer: "Seed 10k" /
+  "Clear synthetic") inserts 10k tracks / 800 albums / 400 artists straight into
+  drift under the `local:synthetic:` id marker (clear removes exactly those).
+  Scroll: fixed `itemExtent` on the Tracks/Artists lists, `cacheWidth`
+  downsampling in the single `AlbumArt` widget, and a bumped image-cache budget
+  at boot. Measured (in-memory, dev hardware): seed 10k ≈ 1.1s, **search 42ms**
+  (< 100ms), **diff 26ms** (< 2s), **restore 500 ids 52ms** (< 500ms) — asserted
+  in `test/perf/scale_perf_test.dart`, which prints the numbers.
+- **Corrupt/missing files.** A new `playable` column (**schema v3**: `addColumn`
+  migration + test). The audio handler catches `playbackEventStream` errors and
+  routes around the bad track via the pure `decidePlaybackFault` (skip / wrap
+  under repeat-all / stop-all-failed / stop-at-end), emitting a domain
+  `PlaybackFault`. `FaultReporter` (read at app start) marks the track
+  `playable = false` and shows a "Couldn't play X — skipped" SnackBar via a
+  root messenger key; a rescan upserts `playable` back to true.
+- **Lifecycle.** `LibraryScan` is keepAlive so an in-flight scan's progress
+  survives a Settings rebuild/rotation (the scan itself lives in the keepAlive
+  `LocalScanner`, whose `_scanning` guard makes a duplicate impossible). Queue
+  restore stays unawaited + guarded, so even a large restore never blocks boot.
+
+120 tests green (added: tag encoding + heuristic, ID3 fixture parsing, tag
+repair round-trip, v2→v3 migration, fault decision + reporter, seeder + clear,
+10k scale budgets). See `DEVICE_CHECKLIST.md` for the on-device verification
+pass. Next: Phase 2 (Now Playing gestures/animations + beauty pass); Subsonic
+remains Phase 3.

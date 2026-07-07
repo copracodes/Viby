@@ -39,6 +39,12 @@ class Tracks extends Table {
   DateTimeColumn get dateModified => dateTime()();
   TextColumn get artworkKey => text().nullable()();
 
+  /// Whether this track is known-playable (added in schema v3). Set false when
+  /// the player fails to load/decode the file (missing / corrupt); a rescan
+  /// upserts it back to true. Playback skips over unplayable tracks so a rotten
+  /// file can't stall the queue.
+  BoolColumn get playable => boolean().withDefault(const Constant(true))();
+
   @override
   Set<Column> get primaryKey => {id};
 }
@@ -134,6 +140,18 @@ class CacheEntries extends Table {
 
   @override
   Set<Column> get primaryKey => {trackId};
+}
+
+/// Recent search terms (added in schema v2). One row per distinct query
+/// (the query text is the primary key); [lastUsed] is bumped on re-search so
+/// the DAO can surface the newest terms and prune the rest.
+@DataClassName('SearchRow')
+class Searches extends Table {
+  TextColumn get query => text()();
+  DateTimeColumn get lastUsed => dateTime()();
+
+  @override
+  Set<Column> get primaryKey => {query};
 }
 
 /// Single-row table (id is pinned to 0) holding the restorable play queue.

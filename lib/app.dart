@@ -4,7 +4,10 @@ import 'dart:developer' as developer;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'core/messenger.dart';
 import 'core/router.dart';
+import 'state/fault_reporter.dart';
+import 'state/history_recorder.dart';
 import 'state/queue_persistence.dart';
 import 'ui/theme/app_theme.dart';
 
@@ -23,6 +26,11 @@ class _VibyAppState extends ConsumerState<VibyApp> {
   @override
   void initState() {
     super.initState();
+    // Start logging plays (feeds Home's "recently played").
+    ref.read(historyRecorderProvider);
+    // Start listening for playback faults (missing / corrupt files) so a bad
+    // file is skipped-with-a-message and marked, not a stall.
+    ref.read(faultReporterProvider);
     unawaited(_restoreQueue());
   }
 
@@ -42,6 +50,7 @@ class _VibyAppState extends ConsumerState<VibyApp> {
     return MaterialApp.router(
       title: 'Viby',
       debugShowCheckedModeBanner: false,
+      scaffoldMessengerKey: rootMessengerKey,
       theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),
       themeMode: ThemeMode.system,

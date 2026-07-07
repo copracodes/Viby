@@ -11,6 +11,7 @@ import '../../state/library_providers.dart';
 import '../../state/player_providers.dart';
 import '../../state/queue_provider.dart';
 import '../../state/track_resolver.dart';
+import '../widgets/queue_list.dart';
 
 /// THROWAWAY debug screen (route `/debug-queue`) for driving the queue engine:
 /// play/shuffle the scanned library, skip, reorder (drag) and remove (swipe).
@@ -59,7 +60,7 @@ class DebugQueueScreen extends ConsumerWidget {
             },
           ),
           const Divider(height: 1),
-          Expanded(child: _QueueList(queue: queue, controller: controller)),
+          const Expanded(child: QueueListView()),
         ],
       ),
     );
@@ -180,55 +181,3 @@ class _LibraryActions extends StatelessWidget {
   }
 }
 
-class _QueueList extends StatelessWidget {
-  const _QueueList({required this.queue, required this.controller});
-
-  final QueueState queue;
-  final QueueController controller;
-
-  @override
-  Widget build(BuildContext context) {
-    if (queue.isEmpty) {
-      return const Center(child: Text('Queue is empty. Play something above.'));
-    }
-    return ReorderableListView.builder(
-      itemCount: queue.length,
-      onReorder: (int oldIndex, int newIndex) {
-        // ReorderableListView gives an insert-before index in the original
-        // list; normalise to the post-removal index the engine expects.
-        final int to = newIndex > oldIndex ? newIndex - 1 : newIndex;
-        controller.reorder(oldIndex, to);
-      },
-      itemBuilder: (BuildContext context, int index) {
-        final Track track = queue.tracks[index];
-        final bool isCurrent = index == queue.currentIndex;
-        return Dismissible(
-          key: ValueKey<String>('${track.id}@$index'),
-          direction: DismissDirection.endToStart,
-          background: ColoredBox(
-            color: Theme.of(context).colorScheme.errorContainer,
-            child: const Align(
-              alignment: Alignment.centerRight,
-              child: Padding(
-                padding: EdgeInsets.only(right: 16),
-                child: Icon(Icons.delete),
-              ),
-            ),
-          ),
-          onDismissed: (_) => controller.removeAt(index),
-          child: ListTile(
-            dense: true,
-            selected: isCurrent,
-            leading: isCurrent
-                ? const Icon(Icons.volume_up)
-                : Text('${index + 1}'),
-            title: Text(track.title, maxLines: 1),
-            subtitle: Text(track.artistName ?? '—', maxLines: 1),
-            trailing: const Icon(Icons.drag_handle),
-            onTap: () => controller.skipTo(index),
-          ),
-        );
-      },
-    );
-  }
-}

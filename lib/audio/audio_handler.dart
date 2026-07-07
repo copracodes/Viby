@@ -12,6 +12,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../data/db/tables.dart' show RepeatMode, TrackSource;
 import '../data/models/track.dart';
+import 'playback_fault.dart';
 
 /// Asset path of the placeholder cover art shown when a track has no artwork.
 const String _kPlaceholderArtAsset = 'assets/placeholder_art.png';
@@ -108,14 +109,25 @@ class VibyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   /// resume when a transient interruption ends).
   bool _pausedByInterruption = false;
 
+  /// Failures since the last track that actually played, so we can tell "skip a
+  /// rotten file" from "the whole queue is unplayable, stop". Reset whenever a
+  /// track reaches `ready`.
+  int _consecutiveFailures = 0;
+
+  /// Emits when a track's file is missing / undecodable (see [PlaybackFault]).
+  final StreamController<PlaybackFault> _faults =
+      StreamController<PlaybackFault>.broadcast();
+
   // --- Streams surfaced to PlayerService (the facade throttles/maps them) ---
 
   Stream<Duration> get positionStream => _player.positionStream;
+  Stream<Duration> get bufferedPositionStream => _player.bufferedPositionStream;
   Stream<Duration?> get durationStream => _player.durationStream;
   Stream<bool> get playingStream => _player.playingStream;
   Stream<ProcessingState> get processingStateStream =>
       _player.processingStateStream;
   Stream<int?> get currentIndexStream => _player.currentIndexStream;
+  Stream<PlaybackFault> get faultStream => _faults.stream;
 
   Future<void> _init() async {
     await _configureAudioSession();
@@ -124,11 +136,18 @@ class VibyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
     // Rebroadcast a fresh PlaybackState whenever the player's event stream or
     // its playing flag changes. Both are needed: playbackEventStream covers
     // processing-state / position / buffering; playingStream covers the
-    // play <-> pause toggle that must flip the notification button.
+    // play <-> pause toggle that must flip the notification button. Errors on
+    // this stream are load/decode failures — a missing or corrupt file — which
+    // we route around so the queue never stalls.
     _player.playbackEventStream.listen(
-      (_) => _broadcastState(),
-      onError: (Object e, StackTrace st) =>
-          developer.log('playback event error', error: e, stackTrace: st),
+      (_) {
+        // A track that reaches `ready` cleared its hurdle: reset the run.
+        if (_player.processingState == ProcessingState.ready) {
+          _consecutiveFailures = 0;
+        }
+        _broadcastState();
+      },
+      onError: (Object e, StackTrace st) => _handlePlaybackError(e, st),
     );
     _player.playingStream.listen((_) => _broadcastState());
 
@@ -380,11 +399,57 @@ class VibyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
     mediaItem.add(null);
   }
 
+  /// The queue's repeat mode, mirrored so the fault handler can decide whether
+  /// to wrap to the top of the queue when the last track fails.
+  RepeatMode _repeatMode = RepeatMode.off;
+
   /// Applies the queue's [RepeatMode] as a just_audio loop mode. Named to avoid
   /// clashing with [BaseAudioHandler.setRepeatMode] (the media-session callback,
   /// which takes an [AudioServiceRepeatMode]).
-  Future<void> applyRepeatMode(RepeatMode mode) =>
-      _player.setLoopMode(_kLoopModeMap[mode]!);
+  Future<void> applyRepeatMode(RepeatMode mode) {
+    _repeatMode = mode;
+    return _player.setLoopMode(_kLoopModeMap[mode]!);
+  }
+
+  /// Handles a load/decode error: emits a [PlaybackFault] and routes playback
+  /// around the bad track (skip / wrap / stop) per [decidePlaybackFault]. Keeps
+  /// the queue moving without UI involvement, so background playback survives a
+  /// rotten file. Marking the track unplayable in the DB is the state layer's
+  /// job (it listens to [faultStream]).
+  Future<void> _handlePlaybackError(Object error, StackTrace st) async {
+    final int index = _player.currentIndex ?? 0;
+    final Track? track =
+        (index >= 0 && index < _queue.length) ? _queue[index] : null;
+    developer.log(
+      'playback error at index $index (${track?.id})',
+      error: error,
+      stackTrace: st,
+    );
+    _consecutiveFailures++;
+    final FaultDecision decision = decidePlaybackFault(
+      failedIndex: index,
+      queueLength: _queue.length,
+      consecutiveFailures: _consecutiveFailures,
+      repeat: _repeatMode,
+    );
+    _faults.add(PlaybackFault(
+      trackId: track?.id,
+      title: track?.title,
+      allFailed: decision.outcome == FaultOutcome.stopAllFailed,
+    ));
+    switch (decision.outcome) {
+      case FaultOutcome.skip:
+        try {
+          await _player.seek(Duration.zero, index: decision.skipIndex);
+          await _player.play();
+        } catch (e, s) {
+          developer.log('skip-after-fault failed', error: e, stackTrace: s);
+        }
+      case FaultOutcome.stopAllFailed:
+      case FaultOutcome.stopEnd:
+        await _player.pause();
+    }
+  }
 
   // --- Transport controls (routed from notification, buttons, and UI) ------
 
@@ -421,5 +486,8 @@ class VibyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   }
 
   /// Releases the underlying player. Called when the whole handler is torn down.
-  Future<void> dispose() => _player.dispose();
+  Future<void> dispose() async {
+    await _faults.close();
+    await _player.dispose();
+  }
 }

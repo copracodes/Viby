@@ -28,10 +28,18 @@ class ArtworkService {
     return dir;
   }
 
-  String _fileName(String artworkKey) => '${artworkKey.replaceAll(':', '_')}.jpg';
+  /// The on-disk file name for [artworkKey] (colons aren't filesystem-safe).
+  /// Public + static so UI can build the path synchronously once it has the
+  /// [directory].
+  static String fileNameFor(String artworkKey) =>
+      '${artworkKey.replaceAll(':', '_')}.jpg';
+
+  /// The artwork directory (created on first use). Exposed so widgets can
+  /// resolve art paths without an async call per image.
+  Future<Directory> directory() => _artworkDir();
 
   Future<File> fileFor(String artworkKey) async =>
-      File(p.join((await _artworkDir()).path, _fileName(artworkKey)));
+      File(p.join((await _artworkDir()).path, fileNameFor(artworkKey)));
 
   Future<bool> hasArtwork(String artworkKey) async =>
       (await fileFor(artworkKey)).exists();

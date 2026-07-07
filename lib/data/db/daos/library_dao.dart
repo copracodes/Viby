@@ -46,6 +46,14 @@ class ArtistWithAlbums {
   final List<AlbumRow> albums;
 }
 
+/// An album plus its resolved artist name — the row shape for the albums grid.
+class AlbumWithArtist {
+  const AlbumWithArtist({required this.album, this.artistName});
+
+  final AlbumRow album;
+  final String? artistName;
+}
+
 /// Reactive reads and idempotent (batch) writes for the core library:
 /// tracks, albums and artists.
 @DriftAccessor(tables: <Type>[Tracks, Albums, Artists])
@@ -61,6 +69,27 @@ class LibraryDao extends DatabaseAccessor<VibyDatabase>
             (t) => OrderingTerm(expression: t.name.lower()),
           ]))
         .watch();
+  }
+
+  /// Every album with its artist name resolved (name order) — the albums grid.
+  Stream<List<AlbumWithArtist>> watchAlbumsWithArtist() {
+    final JoinedSelectStatement<HasResultSet, dynamic> statement =
+        select(albums).join(<Join<HasResultSet, dynamic>>[
+          leftOuterJoin(artists, artists.id.equalsExp(albums.artistId)),
+        ])
+          ..orderBy(<OrderingTerm>[
+            OrderingTerm(expression: albums.name.lower()),
+          ]);
+    return statement.watch().map(
+      (List<TypedResult> rows) => rows
+          .map(
+            (TypedResult r) => AlbumWithArtist(
+              album: r.readTable(albums),
+              artistName: r.readTableOrNull(artists)?.name,
+            ),
+          )
+          .toList(),
+    );
   }
 
   /// Album + its tracks (disc, then track number). Null while the album id is
@@ -94,6 +123,12 @@ class LibraryDao extends DatabaseAccessor<VibyDatabase>
         .watch();
   }
 
+  /// A single artist row (for the album-detail header). Null while unknown.
+  Stream<ArtistRow?> watchArtist(String artistId) {
+    return (select(artists)..where((t) => t.id.equals(artistId)))
+        .watchSingleOrNull();
+  }
+
   /// Artist + their albums (by name). Null while the artist id is unknown.
   Stream<ArtistWithAlbums?> watchArtistWithAlbums(String artistId) {
     final Stream<ArtistRow?> artistStream =
@@ -115,6 +150,24 @@ class LibraryDao extends DatabaseAccessor<VibyDatabase>
   }
 
   // --- Tracks -------------------------------------------------------------
+
+  /// The most-recently-added tracks (dateAdded desc) — the Home strip.
+  Stream<List<TrackRow>> watchRecentlyAdded({int limit = 20}) {
+    return (select(tracks)
+          ..orderBy(<OrderClauseGenerator<$TracksTable>>[
+            (t) => OrderingTerm(expression: t.dateAdded, mode: OrderingMode.desc),
+          ])
+          ..limit(limit))
+        .watch();
+  }
+
+  /// Reactive total track count — drives library empty states.
+  Stream<int> watchTrackCount() {
+    final Expression<int> count = tracks.id.count();
+    return (selectOnly(tracks)..addColumns(<Expression<Object>>[count]))
+        .watchSingle()
+        .map((TypedResult r) => r.read(count) ?? 0);
+  }
 
   Stream<List<TrackRow>> watchAllTracks(TrackSortOrder sort) {
     final SimpleSelectStatement<$TracksTable, TrackRow> query = select(tracks);
@@ -207,6 +260,33 @@ class LibraryDao extends DatabaseAccessor<VibyDatabase>
         .toList();
   }
 
+  /// One-shot fetch of an artist's tracks (+ names), album/disc/track ordered.
+  /// A deliberate `get()`: backs the "play all" action on artist detail, not a
+  /// reactive list.
+  Future<List<TrackWithMeta>> getTracksByArtist(String artistId) async {
+    final JoinedSelectStatement<HasResultSet, dynamic> statement =
+        select(tracks).join(<Join<HasResultSet, dynamic>>[
+          leftOuterJoin(albums, albums.id.equalsExp(tracks.albumId)),
+          leftOuterJoin(artists, artists.id.equalsExp(tracks.artistId)),
+        ])
+          ..where(tracks.artistId.equals(artistId))
+          ..orderBy(<OrderingTerm>[
+            OrderingTerm(expression: albums.name.lower()),
+            OrderingTerm(expression: tracks.discNo),
+            OrderingTerm(expression: tracks.trackNo),
+          ]);
+    final List<TypedResult> rows = await statement.get();
+    return rows
+        .map(
+          (TypedResult row) => TrackWithMeta(
+            track: row.readTable(tracks),
+            albumName: row.readTableOrNull(albums)?.name,
+            artistName: row.readTableOrNull(artists)?.name,
+          ),
+        )
+        .toList();
+  }
+
   // --- Writes (idempotent upserts for the scanner) ------------------------
 
   /// Idempotent batch upsert keyed by the deterministic `id`: re-scanning the
@@ -230,6 +310,73 @@ class LibraryDao extends DatabaseAccessor<VibyDatabase>
   Future<int> deleteTracks(List<String> ids) {
     if (ids.isEmpty) return Future<int>.value(0);
     return (delete(tracks)..where((t) => t.id.isIn(ids))).go();
+  }
+
+  /// Flags a track playable/unplayable (see [Tracks.playable]). Called when the
+  /// player fails to load a file so playback can route around it.
+  Future<void> setTrackPlayable(String id, bool playable) async {
+    await (update(tracks)..where((t) => t.id.equals(id)))
+        .write(TracksCompanion(playable: Value(playable)));
+  }
+
+  // --- Synthetic seed data (debug) ----------------------------------------
+
+  /// Deletes every synthetic row (ids under the `local:synthetic:` marker
+  /// prefix) across tracks, albums and artists — the "clear synthetic" action.
+  /// Returns the number of tracks removed.
+  Future<int> deleteSyntheticData() async {
+    const String pattern = 'local:synthetic:%';
+    int removed = 0;
+    await transaction(() async {
+      removed =
+          await (delete(tracks)..where((t) => t.id.like(pattern))).go();
+      await (delete(albums)..where((t) => t.id.like(pattern))).go();
+      await (delete(artists)..where((t) => t.id.like(pattern))).go();
+    });
+    return removed;
+  }
+
+  // --- Tag-repair sweep ---------------------------------------------------
+
+  /// One-shot reads of the display-name-bearing rows, for the mojibake repair
+  /// pass. Deliberate `get()`s (a one-time maintenance sweep, not reactive UI).
+  Future<List<TrackRow>> allTrackRows() => select(tracks).get();
+  Future<List<AlbumRow>> allAlbumRows() => select(albums).get();
+  Future<List<ArtistRow>> allArtistRows() => select(artists).get();
+
+  /// Applies repaired display strings in one batch: track titles, album names,
+  /// artist names (keyed by id). Empty maps are no-ops.
+  Future<void> applyTagRepairs({
+    Map<String, String> trackTitles = const <String, String>{},
+    Map<String, String> albumNames = const <String, String>{},
+    Map<String, String> artistNames = const <String, String>{},
+  }) async {
+    if (trackTitles.isEmpty && albumNames.isEmpty && artistNames.isEmpty) {
+      return;
+    }
+    await batch((Batch b) {
+      trackTitles.forEach((String id, String title) {
+        b.update(
+          tracks,
+          TracksCompanion(title: Value(title)),
+          where: ($TracksTable t) => t.id.equals(id),
+        );
+      });
+      albumNames.forEach((String id, String name) {
+        b.update(
+          albums,
+          AlbumsCompanion(name: Value(name)),
+          where: ($AlbumsTable t) => t.id.equals(id),
+        );
+      });
+      artistNames.forEach((String id, String name) {
+        b.update(
+          artists,
+          ArtistsCompanion(name: Value(name)),
+          where: ($ArtistsTable t) => t.id.equals(id),
+        );
+      });
+    });
   }
 
   // --- Scanner support ----------------------------------------------------

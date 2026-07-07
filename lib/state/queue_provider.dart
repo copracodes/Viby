@@ -43,6 +43,36 @@ class QueueState {
           ? tracks[currentIndex]
           : null;
 
+  /// Whether [QueueController.next] would move playback somewhere. Mirrors the
+  /// engine's loop logic: with repeat off it's false at the last track (and for
+  /// a single-track queue); with repeat all/one there is always a next (all
+  /// wraps to the first track, one restarts the current). Drives the Next
+  /// button's enabled/dimmed affordance.
+  bool get hasNext {
+    if (isEmpty) return false;
+    switch (repeatMode) {
+      case RepeatMode.one:
+      case RepeatMode.all:
+        return true;
+      case RepeatMode.off:
+        return currentIndex + 1 < length;
+    }
+  }
+
+  /// Whether a *previous track* exists to jump to (independent of the 3s
+  /// restart rule, which the UI layers on top). False at the first track with
+  /// repeat off; always true under repeat all/one.
+  bool get hasPrevious {
+    if (isEmpty) return false;
+    switch (repeatMode) {
+      case RepeatMode.one:
+      case RepeatMode.all:
+        return true;
+      case RepeatMode.off:
+        return currentIndex > 0;
+    }
+  }
+
   QueueState copyWith({
     List<Track>? tracks,
     int? currentIndex,

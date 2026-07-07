@@ -10,6 +10,11 @@ import 'state/player_providers.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // Give the album-art thumbnail cache headroom for scrolling a large library
+  // (10k tracks). Art is decoded downsampled (see AlbumArt.cacheWidth), so this
+  // holds many thumbnails without ballooning memory.
+  PaintingBinding.instance.imageCache.maximumSizeBytes = 160 << 20; // 160 MB
+
   // Start the audio_service isolate/session and get back our handler. This
   // wires the OS media session (notification, lock screen, media buttons).
   final VibyAudioHandler handler = await AudioService.init(

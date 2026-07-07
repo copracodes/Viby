@@ -8,12 +8,13 @@ import '../../db/viby_database.dart';
 import 'artwork_service.dart';
 import 'scan_diff.dart';
 import 'song_mapper.dart';
+import 'tag_repair_service.dart';
 
 /// Phase of an in-flight scan.
-enum ScanPhase { querying, writing, artwork, done }
+enum ScanPhase { querying, writing, artwork, repair, done }
 
 /// A progress tick emitted during a scan. `found`/`processed` are phase-relative
-/// (tracks while writing, albums during artwork).
+/// (tracks while writing, albums during artwork, suspicious rows during repair).
 class ScanProgress {
   const ScanProgress({
     required this.phase,
@@ -21,6 +22,7 @@ class ScanProgress {
     required this.processed,
     this.deleted = 0,
     this.errors = 0,
+    this.repaired = 0,
     this.elapsed = Duration.zero,
   });
 
@@ -29,6 +31,7 @@ class ScanProgress {
   final int processed;
   final int deleted;
   final int errors;
+  final int repaired;
   final Duration elapsed;
 }
 
@@ -42,15 +45,18 @@ class LocalScanner {
     required OnAudioQuery audioQuery,
     required LibraryDao libraryDao,
     required ArtworkService artworkService,
+    TagRepairService? tagRepair,
     this.chunkSize = 500,
     this.minDurationMs = kMinTrackDurationMs,
   }) : _audioQuery = audioQuery,
        _libraryDao = libraryDao,
-       _artworkService = artworkService;
+       _artworkService = artworkService,
+       _tagRepair = tagRepair;
 
   final OnAudioQuery _audioQuery;
   final LibraryDao _libraryDao;
   final ArtworkService _artworkService;
+  final TagRepairService? _tagRepair;
   final int chunkSize;
   final int minDurationMs;
 
@@ -128,7 +134,7 @@ class LocalScanner {
       processed: 0,
     ));
     if (_cancelled) {
-      out.add(_doneProgress(0, 0, 0, stopwatch));
+      out.add(_doneProgress(0, 0, 0, 0, stopwatch));
       return;
     }
 
@@ -235,17 +241,49 @@ class LocalScanner {
       }
     }
 
-    // 5. DONE
+    // 5. REPAIR (mojibake tag re-decode; optional post-scan phase)
+    int repaired = 0;
+    final TagRepairService? repair = _tagRepair;
+    if (repair != null && !_cancelled) {
+      out.add(const ScanProgress(
+        phase: ScanPhase.repair,
+        found: 0,
+        processed: 0,
+      ));
+      try {
+        final RepairResult result = await repair.repairAll(
+          onProgress: (RepairProgress p) => out.add(ScanProgress(
+            phase: ScanPhase.repair,
+            found: p.found,
+            processed: p.processed,
+            deleted: toDelete.length,
+            errors: artworkErrors,
+          )),
+        );
+        repaired = result.repaired;
+        developer.log(
+          'repair: ${result.repaired} of ${result.suspicious} suspicious '
+          'strings fixed in ${result.elapsed.inMilliseconds}ms',
+          name: 'viby.scanner',
+        );
+      } catch (error, stack) {
+        // A repair failure must never abort an otherwise-successful scan.
+        developer.log('tag repair failed', name: 'viby.scanner', error: error, stackTrace: stack);
+      }
+    }
+
+    // 6. DONE
     developer.log(
       'done: wrote $processed tracks, deleted ${toDelete.length}, '
-      '$artworkErrors artwork errors, ${stopwatch.elapsedMilliseconds}ms'
-      '${_cancelled ? ' (cancelled)' : ''}',
+      '$artworkErrors artwork errors, $repaired tags repaired, '
+      '${stopwatch.elapsedMilliseconds}ms${_cancelled ? ' (cancelled)' : ''}',
       name: 'viby.scanner',
     );
     out.add(_doneProgress(
       processed,
       toDelete.length,
       artworkErrors,
+      repaired,
       stopwatch,
     ));
   }
@@ -254,6 +292,7 @@ class LocalScanner {
     int tracks,
     int deleted,
     int errors,
+    int repaired,
     Stopwatch stopwatch,
   ) {
     return ScanProgress(
@@ -262,6 +301,7 @@ class LocalScanner {
       processed: tracks,
       deleted: deleted,
       errors: errors,
+      repaired: repaired,
       elapsed: stopwatch.elapsed,
     );
   }

@@ -1,129 +1,169 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 
-import '../../core/router.dart';
-import '../../state/player_providers.dart';
+import '../../data/db/viby_database.dart';
+import '../../data/sources/local/permission_service.dart';
+import '../../state/library_actions.dart';
+import '../../state/library_providers.dart';
+import '../widgets/album_art.dart';
 
-/// Home screen for the walking-skeleton phase.
-///
-/// Keeps the scaffold branding and adds a minimal transport: a play/pause
-/// button that reflects real playback state, and a seek bar with position /
-/// duration labels. All state is read from Riverpod providers that wrap
-/// `PlayerService` — the UI never touches the player or handler directly.
-class HomeScreen extends StatelessWidget {
+/// Home: recently played and recently added, or a scan call-to-action when the
+/// library is empty.
+class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    final TextTheme text = Theme.of(context).textTheme;
+  Widget build(BuildContext context, WidgetRef ref) {
+    final AsyncValue<int> count = ref.watch(libraryTrackCountProvider);
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Viby'),
-        actions: <Widget>[
-          // Temporary entry points to the throwaway debug screens.
-          IconButton(
-            icon: const Icon(Icons.bug_report_outlined),
-            tooltip: 'Debug: library scan',
-            onPressed: () => context.push(AppRoutes.debugScan),
-          ),
-          IconButton(
-            icon: const Icon(Icons.queue_music_outlined),
-            tooltip: 'Debug: queue',
-            onPressed: () => context.push(AppRoutes.debugQueue),
-          ),
-        ],
-      ),
-      body: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            Icon(
-              Icons.graphic_eq,
-              size: 72,
-              color: Theme.of(context).colorScheme.primary,
-            ),
-            const SizedBox(height: 16),
-            Text('Viby', style: text.headlineMedium),
-            const SizedBox(height: 8),
-            Text('Sample · Viby', style: text.bodyMedium),
-            const SizedBox(height: 32),
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 24),
-              child: _PlayerControls(),
-            ),
-          ],
-        ),
+      appBar: AppBar(title: const Text('Viby')),
+      body: count.when(
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error: (Object e, _) => Center(child: Text('Error: $e')),
+        data: (int tracks) =>
+            tracks == 0 ? const _EmptyLibrary() : const _HomeContent(),
       ),
     );
   }
 }
 
-/// Transport controls: seek bar + play/pause, driven entirely by providers.
-class _PlayerControls extends ConsumerWidget {
-  const _PlayerControls();
+class _HomeContent extends StatelessWidget {
+  const _HomeContent();
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      children: const <Widget>[
+        _Section(title: 'Recently played', kind: _SectionKind.played),
+        _Section(title: 'Recently added', kind: _SectionKind.added),
+      ],
+    );
+  }
+}
+
+enum _SectionKind { played, added }
+
+class _Section extends ConsumerWidget {
+  const _Section({required this.title, required this.kind});
+
+  final String title;
+  final _SectionKind kind;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final bool playing = ref.watch(playingProvider).valueOrNull ?? false;
-    final Duration position =
-        ref.watch(positionProvider).valueOrNull ?? Duration.zero;
-    final Duration duration =
-        ref.watch(trackDurationProvider).valueOrNull ?? Duration.zero;
-
-    final double maxMs =
-        duration.inMilliseconds > 0 ? duration.inMilliseconds.toDouble() : 1.0;
-    final double valueMs =
-        position.inMilliseconds.clamp(0, maxMs.toInt()).toDouble();
+    final AsyncValue<List<TrackRow>> rows = switch (kind) {
+      _SectionKind.played => ref.watch(recentlyPlayedProvider),
+      _SectionKind.added => ref.watch(recentlyAddedProvider),
+    };
+    final List<TrackRow> data = rows.valueOrNull ?? const <TrackRow>[];
+    if (data.isEmpty) return const SizedBox.shrink();
 
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Slider(
-          value: valueMs,
-          max: maxMs,
-          onChanged: duration.inMilliseconds > 0
-              ? (double v) => ref
-                  .read(playerServiceProvider)
-                  .seek(Duration(milliseconds: v.round()))
-              : null,
-        ),
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: <Widget>[
-              Text(_formatDuration(position)),
-              Text(_formatDuration(duration)),
-            ],
-          ),
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+          child: Text(title, style: Theme.of(context).textTheme.titleLarge),
         ),
-        const SizedBox(height: 16),
-        IconButton(
-          iconSize: 72,
-          color: Theme.of(context).colorScheme.primary,
-          icon: Icon(
-            playing ? Icons.pause_circle : Icons.play_circle,
+        SizedBox(
+          height: 190,
+          child: ListView.builder(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            itemCount: data.length,
+            itemBuilder: (BuildContext context, int i) =>
+                _TrackCard(row: data[i]),
           ),
-          onPressed: () {
-            final service = ref.read(playerServiceProvider);
-            if (playing) {
-              service.pause();
-            } else {
-              service.play();
-            }
-          },
-          tooltip: playing ? 'Pause' : 'Play',
         ),
       ],
     );
   }
 }
 
-/// Formats a duration as `m:ss` (or `h:mm:ss` past an hour) for the labels.
-String _formatDuration(Duration d) {
-  String two(int n) => n.toString().padLeft(2, '0');
-  final int hours = d.inHours;
-  final String minutes = hours > 0 ? two(d.inMinutes.remainder(60)) : '${d.inMinutes.remainder(60)}';
-  final String seconds = two(d.inSeconds.remainder(60));
-  return hours > 0 ? '$hours:$minutes:$seconds' : '$minutes:$seconds';
+class _TrackCard extends ConsumerWidget {
+  const _TrackCard({required this.row});
+
+  final TrackRow row;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return SizedBox(
+      width: 140,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: () => playTrackRows(ref, <TrackRow>[row]),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              AlbumArt(artworkKey: row.artworkKey, size: 132, borderRadius: 10),
+              const SizedBox(height: 6),
+              Text(
+                row.title,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _EmptyLibrary extends ConsumerWidget {
+  const _EmptyLibrary();
+
+  Future<void> _scan(WidgetRef ref) async {
+    await ref.read(audioPermissionProvider.notifier).request();
+    final bool granted = ref.read(audioPermissionProvider).valueOrNull ==
+        AudioPermissionStatus.granted;
+    if (granted) await ref.read(libraryScanProvider.notifier).fullScan();
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final bool scanning = ref.watch(libraryScanProvider) is LibraryScanRunning;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Icon(
+              Icons.library_music_outlined,
+              size: 72,
+              color: Theme.of(context).colorScheme.primary,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Your library is empty',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Scan your device to find music.',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+            const SizedBox(height: 24),
+            FilledButton.icon(
+              onPressed: scanning ? null : () => _scan(ref),
+              icon: scanning
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.search),
+              label: Text(scanning ? 'Scanning…' : 'Scan library'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
