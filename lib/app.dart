@@ -14,7 +14,6 @@ import 'state/theme_providers.dart';
 import 'ui/theme/app_background.dart';
 import 'ui/theme/app_theme.dart';
 import 'ui/theme/theme_collection.dart';
-import 'ui/theme/tokens.dart';
 import 'ui/theme/viby_theme.dart';
 
 /// Root application widget.
@@ -84,10 +83,13 @@ class _VibyAppState extends ConsumerState<VibyApp> {
       theme: lightData,
       darkTheme: darkData,
       themeMode: themeMode,
-      // Lerp the app scheme over the theme-morph duration when the selection
-      // changes, so switching themes animates the whole app.
-      themeAnimationDuration: Motion.themeMorph,
-      themeAnimationCurve: Motion.standard,
+      // No global per-frame theme lerp: a whole-app AnimatedTheme rebuilds Theme
+      // every frame, which collides with the Library TabBar's internal
+      // AnimatedBuilder (setState-during-build on _TabStyle) when the startup
+      // hydration morph lands while Library is mounting. The visible transition
+      // is carried by the AppBackground cross-fade (350ms) plus Now Playing's own
+      // scoped AnimatedTheme; the app chrome swaps instantly.
+      themeAnimationDuration: Duration.zero,
       routerConfig: appRouter,
       // The AppBackground is mounted here (above the Navigator, below all
       // routes), so every transparent-scaffold screen renders over the theme's
