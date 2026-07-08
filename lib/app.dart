@@ -11,8 +11,11 @@ import 'state/fault_reporter.dart';
 import 'state/history_recorder.dart';
 import 'state/queue_persistence.dart';
 import 'state/theme_providers.dart';
+import 'ui/theme/app_background.dart';
 import 'ui/theme/app_theme.dart';
 import 'ui/theme/dynamic_theme.dart';
+import 'ui/theme/theme_collection.dart';
+import 'ui/theme/viby_theme.dart';
 
 /// Root application widget.
 ///
@@ -53,29 +56,42 @@ class _VibyAppState extends ConsumerState<VibyApp> {
   @override
   Widget build(BuildContext context) {
     final ThemeSettingsState settings = ref.watch(themeSettingsProvider);
+    final VibyThemeMode mode = settings.mode;
+    final bool amoled = mode == VibyThemeMode.amoled;
+
+    final ThemeData lightData;
+    final ThemeData darkData;
+    final ThemeMode themeMode;
+    if (mode == VibyThemeMode.system) {
+      lightData = AppTheme.fromVibyTheme(classicLight);
+      darkData = AppTheme.fromVibyTheme(classicDark);
+      themeMode = ThemeMode.system;
+    } else {
+      final VibyTheme t = themeForMode(mode, Brightness.dark, amoled: amoled);
+      lightData = darkData = AppTheme.fromVibyTheme(t);
+      themeMode = t.isDark ? ThemeMode.dark : ThemeMode.light;
+    }
+
     return MaterialApp.router(
       title: 'Viby',
       debugShowCheckedModeBanner: false,
       scaffoldMessengerKey: rootMessengerKey,
-      theme: AppTheme.light(),
-      // AMOLED is a dark variant: force dark mode and swap in the black theme.
-      darkTheme: settings.mode == VibyThemeMode.amoled
-          ? AppTheme.amoled()
-          : AppTheme.dark(),
-      themeMode: _flutterThemeMode(settings.mode),
+      theme: lightData,
+      darkTheme: darkData,
+      themeMode: themeMode,
       routerConfig: appRouter,
+      // The AppBackground is mounted here (above the Navigator, below all
+      // routes), so every transparent-scaffold screen renders over the theme's
+      // painted background. Platform brightness is resolved here where a
+      // MediaQuery exists.
+      builder: (BuildContext context, Widget? child) {
+        final Brightness platform = MediaQuery.platformBrightnessOf(context);
+        final VibyTheme active = themeForMode(mode, platform, amoled: amoled);
+        return AppBackground(
+          background: active.background,
+          child: child ?? const SizedBox.shrink(),
+        );
+      },
     );
-  }
-
-  ThemeMode _flutterThemeMode(VibyThemeMode mode) {
-    switch (mode) {
-      case VibyThemeMode.system:
-        return ThemeMode.system;
-      case VibyThemeMode.light:
-        return ThemeMode.light;
-      case VibyThemeMode.dark:
-      case VibyThemeMode.amoled:
-        return ThemeMode.dark;
-    }
   }
 }

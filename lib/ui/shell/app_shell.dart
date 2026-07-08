@@ -3,7 +3,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../state/queue_provider.dart';
+import '../../state/theme_providers.dart';
 import '../player/player_overlay.dart';
+import '../theme/dynamic_theme.dart';
+import '../theme/glass_panel.dart';
+import '../theme/theme_collection.dart';
+import '../theme/viby_theme.dart';
 
 /// The app shell: bottom navigation across Home / Library / Search / Settings
 /// with the unified [PlayerOverlay] floating above it.
@@ -32,6 +37,14 @@ class AppShell extends ConsumerWidget {
       queueControllerProvider.select((QueueState q) => q.currentTrack != null),
     );
 
+    final VibyThemeMode mode =
+        ref.watch(themeSettingsProvider.select((ThemeSettingsState s) => s.mode));
+    final VibyTheme theme = themeForMode(
+      mode,
+      MediaQuery.platformBrightnessOf(context),
+      amoled: mode == VibyThemeMode.amoled,
+    );
+
     return Scaffold(
       body: Stack(
         children: <Widget>[
@@ -40,10 +53,14 @@ class AppShell extends ConsumerWidget {
               Expanded(child: navigationShell),
               // Reserve the docked mini-bar strip so list content clears it.
               if (hasTrack) const SizedBox(height: PlayerOverlay.miniHeight),
-              NavigationBar(
-                selectedIndex: navigationShell.currentIndex,
-                onDestinationSelected: _onDestination,
-                destinations: const <NavigationDestination>[
+              _NavSurface(
+                surface: theme.surface,
+                scheme: Theme.of(context).colorScheme,
+                child: NavigationBar(
+                  backgroundColor: Colors.transparent,
+                  selectedIndex: navigationShell.currentIndex,
+                  onDestinationSelected: _onDestination,
+                  destinations: const <NavigationDestination>[
                   NavigationDestination(
                     icon: Icon(Icons.home_outlined),
                     selectedIcon: Icon(Icons.home),
@@ -63,7 +80,8 @@ class AppShell extends ConsumerWidget {
                     selectedIcon: Icon(Icons.settings),
                     label: 'Settings',
                   ),
-                ],
+                  ],
+                ),
               ),
             ],
           ),
@@ -71,5 +89,46 @@ class AppShell extends ConsumerWidget {
         ],
       ),
     );
+  }
+}
+
+/// Renders the nav bar's surface per the active theme's [SurfaceSpec]: a real
+/// glass blur (the one budgeted always-on live filter), a translucent tint, or
+/// an opaque container.
+class _NavSurface extends StatelessWidget {
+  const _NavSurface({
+    required this.surface,
+    required this.scheme,
+    required this.child,
+  });
+
+  final SurfaceSpec surface;
+  final ColorScheme scheme;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    switch (surface) {
+      case GlassSurface(:final double blurSigma, :final double tintAlpha, :final double borderAlpha):
+        return GlassPanel(
+          blurSigma: blurSigma,
+          tint: scheme.surfaceContainer.withValues(alpha: tintAlpha),
+          borderColor: scheme.onSurface.withValues(alpha: borderAlpha),
+          child: child,
+        );
+      case TintedSurface(:final double alpha):
+        return DecoratedBox(
+          decoration: BoxDecoration(
+            color: scheme.surfaceContainer
+                .withValues(alpha: (alpha + 0.05).clamp(0, 1)),
+            border: Border(
+              top: BorderSide(color: scheme.onSurface.withValues(alpha: 0.06)),
+            ),
+          ),
+          child: child,
+        );
+      case OpaqueSurface():
+        return ColoredBox(color: scheme.surfaceContainer, child: child);
+    }
   }
 }
