@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Adaptive-icon background and splash background: a flat near-black with a
+         faint purple cast (brand). Deliberately flat — no gradient — so the mark
+         stays sharp down to 48dp. -->
+    <color name="ic_launcher_background">#141018</color>
+    <color name="splash_background">#141018</color>
+</resources>

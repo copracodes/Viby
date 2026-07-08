@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/display_names.dart';
 import '../../data/models/track.dart';
+import '../../state/haptics_providers.dart';
 import '../../state/queue_provider.dart';
 import 'album_art.dart';
 
@@ -31,6 +32,7 @@ class QueueListView extends ConsumerWidget {
         // ReorderableListView gives an insert-before index; normalise to the
         // post-removal index the engine expects.
         final int to = newIndex > oldIndex ? newIndex - 1 : newIndex;
+        ref.read(hapticsServiceProvider).light();
         controller.reorder(oldIndex, to);
       },
       itemBuilder: (BuildContext context, int index) {

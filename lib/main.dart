@@ -5,15 +5,25 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'app.dart';
 import 'audio/audio_handler.dart';
 import 'audio/player_service.dart';
+import 'core/perf.dart';
 import 'state/player_providers.dart';
 
 Future<void> main() async {
+  // Touch the cold-start stopwatch first so time-to-first-frame is measured
+  // from as early as possible (the field starts the watch on init).
+  coldStartWatch;
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Give the album-art thumbnail cache headroom for scrolling a large library
-  // (10k tracks). Art is decoded downsampled (see AlbumArt.cacheWidth), so this
-  // holds many thumbnails without ballooning memory.
-  PaintingBinding.instance.imageCache.maximumSizeBytes = 160 << 20; // 160 MB
+  // Deliberate image-cache budget. Art is decoded downsampled (see
+  // AlbumArt.cacheWidth), so a 120 MB / 600-entry cap holds a large scroll's
+  // worth of thumbnails plus the full-res Now Playing art without unbounded
+  // growth over a long browsing session.
+  final ImageCache imageCache = PaintingBinding.instance.imageCache;
+  imageCache.maximumSizeBytes = 120 << 20; // 120 MB
+  imageCache.maximumSize = 600; // entries
+
+  // Profile-only frame-jank logging (no-op in release).
+  installFrameMonitor();
 
   // Start the audio_service isolate/session and get back our handler. This
   // wires the OS media session (notification, lock screen, media buttons).

@@ -29,8 +29,8 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // Home app bar + all four bottom-nav destinations.
-    expect(find.text('Viby'), findsWidgets);
+    // Empty-library welcome + all four bottom-nav destinations.
+    expect(find.text('Welcome to Viby'), findsOneWidget);
     expect(find.text('Home'), findsWidgets);
     expect(find.text('Library'), findsWidgets);
     expect(find.text('Search'), findsWidgets);

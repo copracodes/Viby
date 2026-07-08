@@ -6,38 +6,53 @@ import '../../data/db/daos/library_dao.dart';
 import '../../data/db/viby_database.dart';
 import '../../state/library_actions.dart';
 import '../../state/library_providers.dart';
+import '../theme/tokens.dart';
 import '../widgets/add_to_playlist.dart';
 import '../widgets/album_art.dart';
 import '../widgets/track_tile.dart';
 
-/// Album detail: header (art, title, artist, year, track count), Play / Shuffle,
-/// and the track list. Tapping a row plays the album from that track.
-class AlbumDetailScreen extends ConsumerWidget {
+/// Album detail: a collapsing header (large art + title that fold into a compact
+/// AppBar), a Play / Shuffle pair, and the track list. Tapping a row plays the
+/// album from that track; the currently-playing row shows the equalizer.
+class AlbumDetailScreen extends ConsumerStatefulWidget {
   const AlbumDetailScreen({super.key, required this.albumId});
 
   final String albumId;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<AlbumDetailScreen> createState() => _AlbumDetailScreenState();
+}
+
+class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
+  final ScrollController _controller = ScrollController();
+  static const double _expandedHeight = 360;
+  bool _collapsed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller.addListener(_onScroll);
+  }
+
+  void _onScroll() {
+    final double top = MediaQuery.paddingOf(context).top;
+    final bool collapsed =
+        _controller.offset > _expandedHeight - kToolbarHeight - top;
+    if (collapsed != _collapsed) setState(() => _collapsed = collapsed);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final AsyncValue<AlbumWithTracks?> detail =
-        ref.watch(albumDetailProvider(albumId));
-    final AlbumWithTracks? current = detail.valueOrNull;
+        ref.watch(albumDetailProvider(widget.albumId));
+
     return Scaffold(
-      appBar: AppBar(
-        actions: <Widget>[
-          if (current != null && current.tracks.isNotEmpty)
-            IconButton(
-              icon: const Icon(Icons.playlist_add),
-              tooltip: 'Add to playlist',
-              onPressed: () => showAddTracksToPlaylist(
-                context,
-                ref,
-                current.tracks.map((TrackRow t) => t.id).toList(),
-                label: current.album.name.albumOrUnknown,
-              ),
-            ),
-        ],
-      ),
       body: detail.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (Object e, _) => Center(child: Text('Error: $e')),
@@ -49,35 +64,65 @@ class AlbumDetailScreen extends ConsumerWidget {
           final String? artistName =
               ref.watch(artistProvider(album.artistId)).valueOrNull?.name;
           final List<TrackWithMeta> metas = awt.tracks
-              .map(
-                (TrackRow r) => TrackWithMeta(
-                  track: r,
-                  albumName: album.name,
-                  artistName: artistName,
-                ),
-              )
+              .map((TrackRow r) => TrackWithMeta(
+                    track: r,
+                    albumName: album.name,
+                    artistName: artistName,
+                  ))
               .toList();
 
-          return ListView.builder(
-            itemCount: metas.length + 1,
-            itemBuilder: (BuildContext context, int index) {
-              if (index == 0) {
-                return _Header(
+          return CustomScrollView(
+            controller: _controller,
+            slivers: <Widget>[
+              SliverAppBar(
+                pinned: true,
+                expandedHeight: _expandedHeight,
+                title: AnimatedOpacity(
+                  opacity: _collapsed ? 1 : 0,
+                  duration: Motion.fast,
+                  child: Text(album.name.albumOrUnknown),
+                ),
+                actions: <Widget>[
+                  if (metas.isNotEmpty)
+                    IconButton(
+                      icon: const Icon(Icons.playlist_add),
+                      tooltip: 'Add to playlist',
+                      onPressed: () => showAddTracksToPlaylist(
+                        context,
+                        ref,
+                        metas.map((TrackWithMeta m) => m.track.id).toList(),
+                        label: album.name.albumOrUnknown,
+                      ),
+                    ),
+                ],
+                flexibleSpace: FlexibleSpaceBar(
+                  collapseMode: CollapseMode.parallax,
+                  background: _HeaderArt(
+                    artworkKey: album.artworkKey,
+                    name: album.name,
+                    artistName: artistName,
+                  ),
+                ),
+              ),
+              SliverToBoxAdapter(
+                child: _Actions(
                   album: album,
-                  artistName: artistName,
                   trackCount: metas.length,
                   onPlay: () => playMetas(ref, metas),
                   onShuffle: () => playMetas(ref, metas, shuffle: true),
-                );
-              }
-              final int i = index - 1;
-              final TrackRow row = metas[i].track;
-              return TrackTile(
-                meta: metas[i],
-                trackNumber: row.trackNo > 0 ? row.trackNo : i + 1,
-                onTap: () => playMetas(ref, metas, startIndex: i),
-              );
-            },
+                ),
+              ),
+              SliverList.builder(
+                itemCount: metas.length,
+                itemBuilder: (BuildContext context, int i) => TrackTile(
+                  meta: metas[i],
+                  trackNumber:
+                      metas[i].track.trackNo > 0 ? metas[i].track.trackNo : i + 1,
+                  onTap: () => playMetas(ref, metas, startIndex: i),
+                ),
+              ),
+              const SliverToBoxAdapter(child: SizedBox(height: Spacing.xl)),
+            ],
           );
         },
       ),
@@ -85,17 +130,79 @@ class AlbumDetailScreen extends ConsumerWidget {
   }
 }
 
-class _Header extends StatelessWidget {
-  const _Header({
-    required this.album,
+/// The expanded-header content: the album art centred over a soft scrim.
+class _HeaderArt extends StatelessWidget {
+  const _HeaderArt({
+    required this.artworkKey,
+    required this.name,
     required this.artistName,
+  });
+
+  final String? artworkKey;
+  final String name;
+  final String? artistName;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: <Color>[
+            theme.colorScheme.surfaceContainerHigh,
+            theme.colorScheme.surface,
+          ],
+        ),
+      ),
+      child: SafeArea(
+        bottom: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(
+              Spacing.lg, Spacing.xxxl, Spacing.lg, Spacing.sm),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: <Widget>[
+              Expanded(
+                child: AlbumArt.expand(
+                  artworkKey: artworkKey,
+                  borderRadius: Radii.lg,
+                  outline: true,
+                ),
+              ),
+              const SizedBox(height: Spacing.md),
+              Text(
+                name.albumOrUnknown,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: theme.textTheme.titleLarge,
+              ),
+              Text(
+                artistName.artistOrUnknown,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodyMedium
+                    ?.copyWith(color: theme.colorScheme.primary),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _Actions extends StatelessWidget {
+  const _Actions({
+    required this.album,
     required this.trackCount,
     required this.onPlay,
     required this.onShuffle,
   });
 
   final AlbumRow album;
-  final String? artistName;
   final int trackCount;
   final VoidCallback onPlay;
   final VoidCallback onShuffle;
@@ -109,30 +216,17 @@ class _Header extends StatelessWidget {
     ].join(' · ');
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+      padding: const EdgeInsets.fromLTRB(
+          Spacing.lg, Spacing.sm, Spacing.lg, Spacing.sm),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          AlbumArt(artworkKey: album.artworkKey, size: 200, borderRadius: 16),
-          const SizedBox(height: 16),
-          Text(
-            album.name.albumOrUnknown,
-            textAlign: TextAlign.center,
-            style: theme.textTheme.headlineSmall,
-          ),
-          const SizedBox(height: 4),
-          Text(
-            artistName.artistOrUnknown,
-            textAlign: TextAlign.center,
-            style: theme.textTheme.titleMedium
-                ?.copyWith(color: theme.colorScheme.primary),
-          ),
-          const SizedBox(height: 4),
           Text(
             meta,
             style: theme.textTheme.bodySmall
                 ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: Spacing.md),
           Row(
             children: <Widget>[
               Expanded(
@@ -142,9 +236,9 @@ class _Header extends StatelessWidget {
                   label: const Text('Play'),
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: Spacing.md),
               Expanded(
-                child: OutlinedButton.icon(
+                child: FilledButton.tonalIcon(
                   onPressed: onShuffle,
                   icon: const Icon(Icons.shuffle),
                   label: const Text('Shuffle'),
@@ -152,7 +246,6 @@ class _Header extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 8),
         ],
       ),
     );

@@ -154,6 +154,31 @@ class Searches extends Table {
   Set<Column> get primaryKey => {query};
 }
 
+/// Cached dominant seed colour per artwork (added in schema v4) so album-art
+/// dynamic theming is instant on cold start instead of re-running palette
+/// extraction. [seedColor] is a packed ARGB int; keyed by the album's logical
+/// [Tracks.artworkKey].
+@DataClassName('ArtworkPaletteRow')
+class ArtworkPalettes extends Table {
+  TextColumn get artworkKey => text()();
+  IntColumn get seedColor => integer()();
+
+  @override
+  Set<Column> get primaryKey => {artworkKey};
+}
+
+/// Generic key→value app preferences (added in schema v4): theme mode and the
+/// dynamic-colour toggle live here, so a single small table covers app settings
+/// without a migration per new preference.
+@DataClassName('PreferenceRow')
+class Preferences extends Table {
+  TextColumn get key => text()();
+  TextColumn get value => text()();
+
+  @override
+  Set<Column> get primaryKey => {key};
+}
+
 /// Single-row table (id is pinned to 0) holding the restorable play queue.
 @DataClassName('QueueStateRow')
 class QueueState extends Table {

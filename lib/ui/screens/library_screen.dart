@@ -10,9 +10,13 @@ import '../../data/db/viby_database.dart';
 import '../../state/library_actions.dart';
 import '../../state/library_providers.dart';
 import '../../state/playlist_providers.dart';
+import '../library/fast_scroll.dart';
+import '../theme/tokens.dart';
 import '../widgets/add_to_playlist.dart';
 import '../widgets/album_grid_cell.dart';
+import '../widgets/artist_avatar.dart';
 import '../widgets/playlist_collage.dart';
+import '../widgets/stagger.dart';
 import '../widgets/track_tile.dart';
 
 /// Library: Albums | Artists | Tracks | Playlists.
@@ -81,15 +85,20 @@ class _AlbumsTab extends ConsumerWidget {
     return _AsyncList<AlbumWithArtist>(
       value: ref.watch(albumsProvider),
       emptyLabel: 'No albums yet.',
-      builder: (List<AlbumWithArtist> albums) => GridView.builder(
-        padding: const EdgeInsets.all(12),
-        gridDelegate: kAlbumGridDelegate,
-        itemCount: albums.length,
-        itemBuilder: (BuildContext context, int i) => AlbumGridCell(
-          albumId: albums[i].album.id,
-          artworkKey: albums[i].album.artworkKey,
-          name: albums[i].album.name,
-          artistName: albums[i].artistName,
+      builder: (List<AlbumWithArtist> albums) => StaggerScope(
+        child: GridView.builder(
+          padding: const EdgeInsets.all(Spacing.md),
+          gridDelegate: kAlbumGridDelegate,
+          itemCount: albums.length,
+          itemBuilder: (BuildContext context, int i) => StaggeredEntrance(
+            index: i,
+            child: AlbumGridCell(
+              albumId: albums[i].album.id,
+              artworkKey: albums[i].album.artworkKey,
+              name: albums[i].album.name,
+              artistName: albums[i].artistName,
+            ),
+          ),
         ),
       ),
     );
@@ -111,7 +120,7 @@ class _ArtistsTab extends ConsumerWidget {
         itemBuilder: (BuildContext context, int i) {
           final ArtistRow artist = artists[i];
           return ListTile(
-            leading: const CircleAvatar(child: Icon(Icons.person)),
+            leading: ArtistAvatar(name: artist.name, radius: 20),
             title: Text(artist.name.artistOrUnknown, maxLines: 1),
             onTap: () => context.push(AppRoutes.artist(artist.id)),
           );
@@ -121,21 +130,39 @@ class _ArtistsTab extends ConsumerWidget {
   }
 }
 
-class _TracksTab extends ConsumerWidget {
+class _TracksTab extends ConsumerStatefulWidget {
   const _TracksTab();
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_TracksTab> createState() => _TracksTabState();
+}
+
+class _TracksTabState extends ConsumerState<_TracksTab> {
+  final ScrollController _scrollController = ScrollController();
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return _AsyncList<TrackWithMeta>(
       value: ref.watch(allTracksProvider),
       emptyLabel: 'No tracks yet.',
-      builder: (List<TrackWithMeta> tracks) => ListView.builder(
-        // Fixed two-line ListTile height → constant-time scroll over 10k rows.
-        itemExtent: 64,
-        itemCount: tracks.length,
-        itemBuilder: (BuildContext context, int i) => TrackTile(
-          meta: tracks[i],
-          onTap: () => playMetas(ref, tracks, startIndex: i),
+      builder: (List<TrackWithMeta> tracks) => FastScrollbar(
+        controller: _scrollController,
+        labels: tracks.map((TrackWithMeta t) => t.track.title).toList(),
+        child: ListView.builder(
+          controller: _scrollController,
+          // Fixed two-line ListTile height → constant-time scroll over 10k rows.
+          itemExtent: 64,
+          itemCount: tracks.length,
+          itemBuilder: (BuildContext context, int i) => TrackTile(
+            meta: tracks[i],
+            onTap: () => playMetas(ref, tracks, startIndex: i),
+          ),
         ),
       ),
     );

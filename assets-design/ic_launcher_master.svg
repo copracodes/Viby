@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Viby app-icon master (512×512, Play-Store round-safe). Vector source of
+     truth for the adaptive icon in android/app/src/main/res. Flat near-black
+     background + brand waveform mark. Rasterise to 512px PNG for store upload;
+     the on-device icon is rendered from the matching vector drawables. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#141018"/>
+  <g stroke-linecap="round" stroke-width="40" fill="none">
+    <!-- viewBox 512; bars centred at cy=256, matching res/drawable proportions -->
+    <line x1="142" y1="194" x2="142" y2="318" stroke="#7C4DFF"/>
+    <line x1="199" y1="156" x2="199" y2="356" stroke="#9B7BFF"/>
+    <line x1="256" y1="213" x2="256" y2="299" stroke="#7C4DFF"/>
+    <line x1="313" y1="147" x2="313" y2="365" stroke="#9B7BFF"/>
+    <line x1="370" y1="180" x2="370" y2="332" stroke="#7C4DFF"/>
+  </g>
+</svg>

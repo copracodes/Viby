@@ -19,11 +19,15 @@ void main() {
       "VALUES ('local:1','local','T','a','ar',0,0,1000,0,0,1)",
     );
     await db.customStatement('ALTER TABLE tracks DROP COLUMN playable');
+    // v2 predates the v4 tables too — drop them so onUpgrade recreates them.
+    await db.customStatement('DROP TABLE artwork_palettes');
+    await db.customStatement('DROP TABLE preferences');
     await db.customStatement('PRAGMA user_version = 2');
     await db.close();
 
-    // Reopen: drift sees user_version 2 < 3 and runs onUpgrade, which must
-    // re-add `playable`. The pre-existing row should read back as playable.
+    // Reopen: drift sees user_version 2 < 4 and runs onUpgrade, which must
+    // re-add `playable` (and create the v4 tables). The pre-existing row should
+    // read back as playable.
     db = VibyDatabase.forTesting(NativeDatabase(file));
     final List<TrackRow> rows = await db.libraryDao.allTrackRows();
     expect(rows.single.playable, isTrue);

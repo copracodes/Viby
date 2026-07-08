@@ -16,11 +16,14 @@ void main() {
     await db.customStatement('SELECT 1'); // forces open + onCreate
     await db.customStatement('DROP TABLE searches');
     await db.customStatement('ALTER TABLE tracks DROP COLUMN playable');
+    await db.customStatement('DROP TABLE artwork_palettes');
+    await db.customStatement('DROP TABLE preferences');
     await db.customStatement('PRAGMA user_version = 1');
     await db.close();
 
-    // Reopen: drift sees user_version 1 < 3 and runs onUpgrade, which must
-    // recreate `searches` and re-add `playable`. Using both proves it ran.
+    // Reopen: drift sees user_version 1 < 4 and runs onUpgrade, which must
+    // recreate `searches`, re-add `playable`, and create the v4 tables. Using
+    // `searches` proves the replay ran end to end.
     db = VibyDatabase.forTesting(NativeDatabase(file));
     await db.searchDao.recordSearch('daft punk');
     final List<String> recents = await db.searchDao.watchRecentSearches().first;

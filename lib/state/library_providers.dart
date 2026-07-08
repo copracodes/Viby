@@ -289,6 +289,12 @@ Stream<List<TrackRow>> recentlyPlayed(Ref ref) =>
 Stream<List<TrackRow>> recentlyAdded(Ref ref) =>
     ref.watch(vibyDatabaseProvider).libraryDao.watchRecentlyAdded();
 
+/// Most-played tracks (by play count) — Home "Your top tracks" strip. Only
+/// surfaced once there's enough history (see `shouldShowTopTracks`).
+@riverpod
+Stream<List<TrackRow>> topTracks(Ref ref) =>
+    ref.watch(vibyDatabaseProvider).historyDao.watchMostPlayed(limit: 20);
+
 /// Reactive total track count — drives library/Home empty states.
 @riverpod
 Stream<int> libraryTrackCount(Ref ref) =>

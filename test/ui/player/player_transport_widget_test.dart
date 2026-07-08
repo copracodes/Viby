@@ -1,17 +1,17 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:viby/core/haptics.dart';
 import 'package:viby/data/db/tables.dart' show TrackSource;
 import 'package:viby/data/models/track.dart';
-import 'package:viby/state/library_providers.dart';
+import 'package:viby/state/haptics_providers.dart';
 import 'package:viby/state/player_providers.dart';
 import 'package:viby/state/queue_provider.dart';
-import 'package:viby/ui/screens/now_playing_screen.dart';
+import 'package:viby/ui/player/player_transport.dart';
+import 'package:viby/ui/player/pressable_scale.dart';
 import 'package:viby/ui/theme/app_theme.dart';
 
-import '../support/fake_queue_sink.dart';
+import '../../support/fake_queue_sink.dart';
 
 Track _t(String id) => Track(
       id: id,
@@ -23,24 +23,14 @@ Track _t(String id) => Track(
       filePath: '/music/$id.mp3',
     );
 
-ProviderContainer _container(
-  FakeSink sink, {
-  Duration position = Duration.zero,
-}) {
+ProviderContainer _container(FakeSink sink, {Duration position = Duration.zero}) {
   return ProviderContainer(
     overrides: <Override>[
       queueSinkProvider.overrideWithValue(sink),
+      hapticsServiceProvider.overrideWithValue(HapticsService(() => false)),
       playingProvider.overrideWith((Ref ref) => Stream<bool>.value(false)),
       positionProvider
           .overrideWith((Ref ref) => Stream<Duration>.value(position)),
-      bufferedPositionProvider
-          .overrideWith((Ref ref) => Stream<Duration>.value(Duration.zero)),
-      trackDurationProvider.overrideWith(
-        (Ref ref) => Stream<Duration?>.value(const Duration(minutes: 3)),
-      ),
-      artworkDirectoryProvider.overrideWith(
-        (Ref ref) => Future<Directory>.value(Directory.systemTemp),
-      ),
     ],
   );
 }
@@ -48,23 +38,29 @@ ProviderContainer _container(
 Widget _app(ProviderContainer container) => UncontrolledProviderScope(
       container: container,
       child: MaterialApp(
-        theme: AppTheme.light(),
-        home: const NowPlayingScreen(),
+        theme: AppTheme.dark(),
+        home: const Scaffold(
+          body: Center(child: PlayerTransport()),
+        ),
       ),
     );
 
-VoidCallback? _onPressedFor(WidgetTester tester, IconData icon) =>
-    tester.widget<IconButton>(find.widgetWithIcon(IconButton, icon)).onPressed;
+/// The PressableScale wrapping a given control icon (null onTap == disabled).
+PressableScale _controlFor(WidgetTester tester, IconData icon) =>
+    tester.widget<PressableScale>(
+      find.ancestor(
+        of: find.byIcon(icon),
+        matching: find.byType(PressableScale),
+      ),
+    );
 
 void main() {
-  testWidgets('transport buttons dispatch the right queue operations', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('transport buttons dispatch the right queue operations',
+      (WidgetTester tester) async {
     final FakeSink sink = FakeSink();
     final ProviderContainer container = _container(sink);
     addTearDown(container.dispose);
 
-    // Start mid-queue so both prev and next are live.
     await container
         .read(queueControllerProvider.notifier)
         .setQueue(<Track>[_t('a'), _t('b'), _t('c')], startIndex: 1);
@@ -73,7 +69,6 @@ void main() {
     await tester.pumpWidget(_app(container));
     await tester.pumpAndSettle();
 
-    // Next / previous delegate straight to the sink.
     await tester.tap(find.byIcon(Icons.skip_next));
     await tester.pumpAndSettle();
     expect(sink.calls, contains('next'));
@@ -82,21 +77,18 @@ void main() {
     await tester.pumpAndSettle();
     expect(sink.calls, contains('prev'));
 
-    // Shuffle reorders the queue in place (engine-side shuffle).
     await tester.tap(find.byIcon(Icons.shuffle));
     await tester.pumpAndSettle();
     expect(sink.calls.any((String c) => c.startsWith('reorder(')), isTrue);
     expect(container.read(queueControllerProvider).shuffleOn, isTrue);
 
-    // Repeat cycles off → all and mirrors the loop mode to the sink.
     await tester.tap(find.byIcon(Icons.repeat));
     await tester.pumpAndSettle();
     expect(sink.calls, contains('repeat(all)'));
   });
 
-  testWidgets('a single-track queue dims Next and Previous', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('a single-track queue dims Next and Previous',
+      (WidgetTester tester) async {
     final FakeSink sink = FakeSink();
     final ProviderContainer container = _container(sink);
     addTearDown(container.dispose);
@@ -108,9 +100,8 @@ void main() {
     await tester.pumpWidget(_app(container));
     await tester.pumpAndSettle();
 
-    // No next track and <3s in → both disabled (onPressed == null).
-    expect(_onPressedFor(tester, Icons.skip_next), isNull);
-    expect(_onPressedFor(tester, Icons.skip_previous), isNull);
+    expect(_controlFor(tester, Icons.skip_next).onTap, isNull);
+    expect(_controlFor(tester, Icons.skip_previous).onTap, isNull);
   });
 
   testWidgets('past 3s, Previous re-enables (restart) even with no prior track',
@@ -127,7 +118,7 @@ void main() {
     await tester.pumpWidget(_app(container));
     await tester.pumpAndSettle();
 
-    expect(_onPressedFor(tester, Icons.skip_next), isNull); // still no next
-    expect(_onPressedFor(tester, Icons.skip_previous), isNotNull);
+    expect(_controlFor(tester, Icons.skip_next).onTap, isNull);
+    expect(_controlFor(tester, Icons.skip_previous).onTap, isNotNull);
   });
 }

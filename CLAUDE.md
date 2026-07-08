@@ -262,5 +262,96 @@ no new features:
 120 tests green (added: tag encoding + heuristic, ID3 fixture parsing, tag
 repair round-trip, v2→v3 migration, fault decision + reporter, seeder + clear,
 10k scale budgets). See `DEVICE_CHECKLIST.md` for the on-device verification
-pass. Next: Phase 2 (Now Playing gestures/animations + beauty pass); Subsonic
-remains Phase 3.
+pass. **Phase 1 is complete and committed.**
+
+## Phase 2 — beauty pass
+
+**Step 2.1 — design system + album-art dynamic theming.**
+- **Design tokens** (`ui/theme/tokens.dart`): the single source of truth for
+  `Spacing` (4pt grid), `Radii` (sm/md/lg/full), `Motion` (durations
+  fast/base/emphasized + the 350ms `themeMorph`; M3 curves standard /
+  emphasizedDecelerate / emphasizedAccelerate), `Elevations` (dark-first —
+  prefer M3 surface *tint* over shadows), and the `VibyType` type scale.
+  `AppTheme.fromScheme` is the one place `ThemeData` is assembled, so the brand
+  theme and the dynamic theme are structurally identical (only colours differ).
+  Screens compose from tokens instead of magic numbers (hero surfaces swept;
+  new UI must follow).
+- **Dynamic theming** (`ui/theme/dynamic_theme.dart`): `palette_generator`
+  extracts the dominant *vibrant* colour from the artwork file →
+  `ColorScheme.fromSeed`. Variants: light / dark / **amoledBlack** (pure #000
+  surfaces). Guards: `ensureContrast` holds primary-on-surface ≥ 4.5:1;
+  near-monochrome art (`isNearMonochrome`) falls back to the brand purple seed.
+  Cache: an in-memory `LruCache` (~50) over a drift `ArtworkPalettes` seed cache
+  (**schema v4**, with a generic `Preferences` KV table; migration + test), so
+  cold start themes instantly.
+- **Scoping decision (documented per spec):** dynamic colour is a
+  **now-playing-context** thing, **not** a whole-app strobe. Only the
+  **mini-player** and **Now Playing** opt in (each wrapped in
+  `DynamicThemeScope`, which lerps the `ColorScheme` over 350ms via
+  `AnimatedTheme` → `ThemeData.lerp`). **Library / Home / Search / Settings stay
+  on the calm base theme** so browsing doesn't flash a new colour with every
+  track change.
+- **Settings** now has a real theme-mode selector (System / Light / Dark /
+  AMOLED) + a "Dynamic color from artwork" toggle, persisted via the
+  `PreferencesDao` (`state/theme_providers.dart`; defaults applied synchronously
+  so the first frame themes correctly, then hydrated from drift).
+
+135 tests green (added: contrast guard, monochrome fallback, LRU eviction,
+amoled surfaces, v3→v4 migration + palette/preferences DAO round-trips).
+
+**Step 2.2 (session 1 of 2+) — the Now Playing flagship.** Structure,
+transitions, and core gestures (micro-polish iterates on device feel):
+- **One continuous surface.** The old `/now-playing` modal route,
+  `NowPlayingScreen` and `MiniPlayer` are **gone**. In their place, a single
+  `PlayerOverlay` (`ui/player/`) is *both* the docked mini-player (expansion 0)
+  and full-screen Now Playing (expansion 1), driven by one `AnimationController`.
+  It's a `Positioned.fill` sibling above the nav shell (`AppShell` restructured
+  to a Stack); while collapsed it only occupies the mini-bar strip, so the shell
+  stays interactive, and the column reserves that strip's height. Drag up / down
+  and tap all drive the same controller; release settles by the pure
+  `settleTarget` (fling completes, < 40% travel springs back). The artwork is a
+  shared element whose rect lerps between the mini thumb and the full card.
+- **Layout on the dynamic scheme.** Blurred artwork backdrop
+  (`NowPlayingBackdrop`, `RepaintBoundary`-isolated + never watching position),
+  scrim at 70% surface; artwork card scales 1.0↔0.94 on play/pause; themed
+  scrubber with a scrub-time bubble (`PlayerProgress`); transport with springy
+  press (`PressableScale`) + an `AnimatedIcon` play↔pause morph
+  (`PlayerTransport`), disabled states per the 1.4 rules.
+- **Artwork swipe-to-skip** (`ArtworkStage`): follows the finger with neighbour
+  peek, commits at 35% or a fling, rubber-bands at the ends, and touches the
+  queue **only on commit** (never mid-drag). Vertical (expand/collapse) vs
+  horizontal (skip) disambiguate via the gesture arena.
+- **Queue sheet**: "Up next" + the shared reorder/remove list + clear-with-confirm.
+- Pure decision logic (`ui/player/player_transition.dart`) is fully unit-tested
+  (settle state machine, swipe-commit threshold, previous-gating).
+
+147 tests green. Session 2 is the micro-polish / feel pass (parallax tuning,
+marquee, artist tap, interruption niceties) after on-device testing.
+
+**Step 2.3 — Library & Home beauty pass.** The Now Playing design language now
+runs across the whole app (same `tokens.dart`, same motion):
+- **Reusable pieces.** `Shimmer` (skeleton, replaces load spinners), `AlbumArt`
+  upgraded (shimmer-while-resolving + 200ms crossfade-in + optional 1px scheme
+  `outline`), `EqualizerBars` (3-bar current-track indicator, freezes when
+  paused), `StaggerScope`/`StaggeredEntrance` (one shared controller → entrance
+  runs once on first build, not on scroll/rebuild), `ArtistAvatar` (initials on
+  primary container), and a central `HapticsService` (`core/haptics.dart` +
+  `state/haptics_providers.dart`, persisted enable flag).
+- **Library.** Albums grid: staggered fade+rise entrance, outlined rounded-md
+  art. Album & Artist detail: collapsing `SliverAppBar` headers (large art /
+  avatar folding into a compact bar whose title fades in), Play + **tonal**
+  Shuffle pair. `TrackTile` shows the equalizer on the current row (each visible
+  row cheaply watches `currentTrack?.id == id`). Tracks tab: alphabet
+  `FastScrollbar` (draggable thumb + letter bubble) for the 10k case.
+- **Home.** Time-of-day greeting (`greetingForHour`), horizontal strips with
+  press-scale cards (0.97) + "See all", a **"Your top tracks"** section gated by
+  `shouldShowTopTracks` (≥5 distinct plays, `topTracksProvider` →
+  `watchMostPlayed`), and a welcoming empty state. Home lost its AppBar (the
+  greeting is the header).
+- **Haptics.** Light impact on play/pause, skip commit, reorder drop, playlist
+  add; selection tick on shuffle/repeat; nothing on scroll/drag. Settings ›
+  Feedback toggle.
+
+Pure logic (`ui/library/fast_scroll.dart`, `ui/home/home_logic.dart`) is
+unit-tested; a widget test pins the stagger's run-once behaviour. 158 tests
+green. Subsonic remains Phase 3.

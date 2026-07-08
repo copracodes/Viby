@@ -6,17 +6,21 @@ import 'package:path/path.dart' as p;
 
 import '../../data/sources/local/artwork_service.dart';
 import '../../state/library_providers.dart';
+import '../theme/tokens.dart';
+import 'shimmer.dart';
 
 /// Square album artwork loaded from the on-disk cache, with a themed
-/// music-note placeholder when there's no key, the directory isn't ready, or
-/// the file is missing/unreadable. The single place art is rendered.
+/// music-note placeholder when there's no key or the file is missing/unreadable,
+/// a shimmer skeleton while the cache directory resolves, and a 200ms fade as
+/// the image decodes. The single place art is rendered.
 class AlbumArt extends ConsumerWidget {
   const AlbumArt({
     super.key,
     required this.artworkKey,
     this.size = 56,
-    this.borderRadius = 8,
+    this.borderRadius = Radii.sm,
     this.decodeSize = 512,
+    this.outline = false,
   });
 
   /// Fills the bounded parent (e.g. an [Expanded] in a grid cell) instead of a
@@ -24,13 +28,17 @@ class AlbumArt extends ConsumerWidget {
   const AlbumArt.expand({
     super.key,
     required this.artworkKey,
-    this.borderRadius = 8,
+    this.borderRadius = Radii.sm,
     this.decodeSize = 512,
+    this.outline = false,
   }) : size = null;
 
   final String? artworkKey;
   final double? size;
   final double borderRadius;
+
+  /// Draws a hairline scheme outline around the art (grid cells).
+  final bool outline;
 
   /// Upper bound (logical px) used to compute the decode resolution, so a 600px
   /// source isn't held in the image cache at full size behind a 48px thumbnail.
@@ -46,8 +54,14 @@ class AlbumArt extends ConsumerWidget {
         key == null ? null : ref.watch(artworkDirectoryProvider).valueOrNull;
 
     Widget content;
-    if (key == null || dir == null) {
+    if (key == null) {
       content = _placeholder(scheme, radius);
+    } else if (dir == null) {
+      // Directory still resolving → skeleton, not a spinner.
+      content = ClipRRect(
+        borderRadius: radius,
+        child: Shimmer(borderRadius: borderRadius),
+      );
     } else {
       final File file = File(p.join(dir.path, ArtworkService.fileNameFor(key)));
       // Decode to roughly display resolution: a 48px thumbnail doesn't need the
@@ -66,7 +80,38 @@ class AlbumArt extends ConsumerWidget {
           cacheWidth: cacheWidth,
           filterQuality: FilterQuality.low,
           errorBuilder: (_, __, ___) => _placeholder(scheme, radius),
+          // Fade the decoded image in (skeleton→art), skipping the fade when the
+          // frame is already cached (synchronous) to avoid a flash on scroll.
+          frameBuilder: (_, Widget child, int? frame, bool sync) {
+            if (sync) return child;
+            return Stack(
+              fit: StackFit.expand,
+              children: <Widget>[
+                if (frame == null) Shimmer(borderRadius: borderRadius),
+                AnimatedOpacity(
+                  opacity: frame == null ? 0 : 1,
+                  duration: Motion.base,
+                  curve: Motion.standard,
+                  child: child,
+                ),
+              ],
+            );
+          },
         ),
+      );
+    }
+
+    if (outline) {
+      content = DecoratedBox(
+        position: DecorationPosition.foreground,
+        decoration: BoxDecoration(
+          borderRadius: radius,
+          border: Border.all(
+            color: scheme.outlineVariant.withValues(alpha: 0.5),
+            width: 1,
+          ),
+        ),
+        child: content,
       );
     }
 

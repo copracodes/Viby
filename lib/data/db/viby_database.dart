@@ -8,7 +8,9 @@ import 'package:path_provider/path_provider.dart';
 import 'daos/cache_dao.dart';
 import 'daos/history_dao.dart';
 import 'daos/library_dao.dart';
+import 'daos/palette_dao.dart';
 import 'daos/playlist_dao.dart';
+import 'daos/preferences_dao.dart';
 import 'daos/queue_dao.dart';
 import 'daos/search_dao.dart';
 import 'daos/server_dao.dart';
@@ -33,6 +35,8 @@ part 'viby_database.g.dart';
     CacheEntries,
     QueueState,
     Searches,
+    ArtworkPalettes,
+    Preferences,
   ],
   daos: <Type>[
     LibraryDao,
@@ -42,6 +46,8 @@ part 'viby_database.g.dart';
     CacheDao,
     ServerDao,
     SearchDao,
+    PaletteDao,
+    PreferencesDao,
   ],
 )
 class VibyDatabase extends _$VibyDatabase {
@@ -53,7 +59,7 @@ class VibyDatabase extends _$VibyDatabase {
   VibyDatabase.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 3;
+  int get schemaVersion => 4;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -79,6 +85,12 @@ class VibyDatabase extends _$VibyDatabase {
       // v2 → v3: per-track `playable` flag (defaults true for existing rows).
       if (from < 3) {
         await m.addColumn(tracks, tracks.playable);
+      }
+      // v3 → v4: artwork seed-colour cache + generic preferences KV store
+      // (album-art dynamic theming).
+      if (from < 4) {
+        await m.createTable(artworkPalettes);
+        await m.createTable(preferences);
       }
     },
     beforeOpen: (OpeningDetails details) async {

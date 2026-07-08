@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
@@ -7,7 +8,6 @@ import '../ui/screens/debug_queue_screen.dart';
 import '../ui/screens/debug_scan_screen.dart';
 import '../ui/screens/home_screen.dart';
 import '../ui/screens/library_screen.dart';
-import '../ui/screens/now_playing_screen.dart';
 import '../ui/screens/playlist_detail_screen.dart';
 import '../ui/screens/search_screen.dart';
 import '../ui/screens/settings_screen.dart';
@@ -27,7 +27,6 @@ class AppRoutes {
   static const String library = '/library';
   static const String search = '/search';
   static const String settings = '/settings';
-  static const String nowPlaying = '/now-playing';
 
   /// THROWAWAY debug routes (Phase 1.2 / 1.3), now under Settings › Developer.
   static const String debugScan = '/settings/debug-scan';
@@ -107,32 +106,27 @@ final GoRouter appRouter = GoRouter(
               path: AppRoutes.settings,
               builder: (BuildContext context, GoRouterState state) =>
                   const SettingsScreen(),
+              // Throwaway debug tools — registered in non-release builds only
+              // (debug + profile, so the profile perf pass can reach them), so
+              // they (and their screens) are tree-shaken out of release.
               routes: <RouteBase>[
-                GoRoute(
-                  path: 'debug-scan',
-                  builder: (BuildContext context, GoRouterState state) =>
-                      const DebugScanScreen(),
-                ),
-                GoRoute(
-                  path: 'debug-queue',
-                  builder: (BuildContext context, GoRouterState state) =>
-                      const DebugQueueScreen(),
-                ),
+                if (!kReleaseMode)
+                  GoRoute(
+                    path: 'debug-scan',
+                    builder: (BuildContext context, GoRouterState state) =>
+                        const DebugScanScreen(),
+                  ),
+                if (!kReleaseMode)
+                  GoRoute(
+                    path: 'debug-queue',
+                    builder: (BuildContext context, GoRouterState state) =>
+                        const DebugQueueScreen(),
+                  ),
               ],
             ),
           ],
         ),
       ],
-    ),
-    GoRoute(
-      path: AppRoutes.nowPlaying,
-      parentNavigatorKey: _rootNavigatorKey,
-      // Full-screen modal (bottom-up transition), covering the shell.
-      pageBuilder: (BuildContext context, GoRouterState state) =>
-          const MaterialPage<void>(
-            fullscreenDialog: true,
-            child: NowPlayingScreen(),
-          ),
     ),
   ],
 );

@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/display_names.dart';
 import '../../core/router.dart';
+import '../theme/tokens.dart';
 import 'album_art.dart';
 
 /// A single album cell (art + name + artist) for the albums grid on the Library
@@ -25,15 +26,19 @@ class AlbumGridCell extends StatelessWidget {
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
     return InkWell(
-      borderRadius: BorderRadius.circular(10),
+      borderRadius: Radii.brMd,
       onTap: () => context.push(AppRoutes.album(albumId)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           Expanded(
-            child: AlbumArt.expand(artworkKey: artworkKey, borderRadius: 10),
+            child: AlbumArt.expand(
+              artworkKey: artworkKey,
+              borderRadius: Radii.md,
+              outline: true,
+            ),
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: Spacing.xs),
           Text(
             name.albumOrUnknown,
             maxLines: 1,
@@ -57,7 +62,7 @@ class AlbumGridCell extends StatelessWidget {
 const SliverGridDelegate kAlbumGridDelegate =
     SliverGridDelegateWithFixedCrossAxisCount(
   crossAxisCount: 2,
-  crossAxisSpacing: 12,
-  mainAxisSpacing: 12,
+  crossAxisSpacing: Spacing.md,
+  mainAxisSpacing: Spacing.md,
   childAspectRatio: 0.78,
 );

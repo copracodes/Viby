@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/db/daos/playlist_dao.dart';
 import '../../state/database_providers.dart';
+import '../../state/haptics_providers.dart';
 import '../../state/playlist_providers.dart';
 import 'playlist_collage.dart';
 
@@ -165,7 +166,10 @@ class _AddTrackSheet extends ConsumerWidget {
                 ),
                 title: Text(s.playlist.name, maxLines: 1),
                 subtitle: Text('${s.trackCount} songs'),
-                onChanged: (_) => dao.toggleTrack(s.playlist.id, trackId),
+                onChanged: (_) {
+                  ref.read(hapticsServiceProvider).light();
+                  dao.toggleTrack(s.playlist.id, trackId);
+                },
               ),
           ],
         ),
@@ -188,6 +192,7 @@ class _AddTracksSheet extends ConsumerWidget {
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
 
     Future<void> addTo(String playlistId, String name) async {
+      ref.read(hapticsServiceProvider).light();
       Navigator.of(context).pop();
       await dao.addTracks(playlistId, trackIds);
       messenger.showSnackBar(

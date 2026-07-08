@@ -39,10 +39,24 @@ android {
             // TODO: Add your own signing config for the release build.
             // Signing with the debug keys for now, so `flutter run --release` works.
             signingConfig = signingConfigs.getByName("debug")
+            // R8 code + resource shrinking. Keep rules for the native-integration
+            // plugins live in proguard-rules.pro.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
         }
     }
 }
 
 flutter {
     source = "../.."
+}
+
+dependencies {
+    // Android 12+ SplashScreen API, backported to older releases. Used by
+    // MainActivity.installSplashScreen() for a branded, flash-free cold start.
+    implementation("androidx.core:core-splashscreen:1.0.1")
 }
