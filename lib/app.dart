@@ -13,8 +13,8 @@ import 'state/queue_persistence.dart';
 import 'state/theme_providers.dart';
 import 'ui/theme/app_background.dart';
 import 'ui/theme/app_theme.dart';
-import 'ui/theme/dynamic_theme.dart';
 import 'ui/theme/theme_collection.dart';
+import 'ui/theme/tokens.dart';
 import 'ui/theme/viby_theme.dart';
 
 /// Root application widget.
@@ -56,18 +56,23 @@ class _VibyAppState extends ConsumerState<VibyApp> {
   @override
   Widget build(BuildContext context) {
     final ThemeSettingsState settings = ref.watch(themeSettingsProvider);
-    final VibyThemeMode mode = settings.mode;
-    final bool amoled = mode == VibyThemeMode.amoled;
 
     final ThemeData lightData;
     final ThemeData darkData;
     final ThemeMode themeMode;
-    if (mode == VibyThemeMode.system) {
+    if (settings.systemFollow) {
       lightData = AppTheme.fromVibyTheme(classicLight);
-      darkData = AppTheme.fromVibyTheme(classicDark);
+      darkData = AppTheme.fromVibyTheme(
+        settings.amoledOverride ? applyAmoled(classicDark) : classicDark,
+      );
       themeMode = ThemeMode.system;
     } else {
-      final VibyTheme t = themeForMode(mode, Brightness.dark, amoled: amoled);
+      final VibyTheme t = resolveActiveTheme(
+        selectedId: settings.themeId,
+        systemFollow: false,
+        platformBrightness: Brightness.dark, // unused when not following
+        amoledOverride: settings.amoledOverride,
+      );
       lightData = darkData = AppTheme.fromVibyTheme(t);
       themeMode = t.isDark ? ThemeMode.dark : ThemeMode.light;
     }
@@ -79,14 +84,22 @@ class _VibyAppState extends ConsumerState<VibyApp> {
       theme: lightData,
       darkTheme: darkData,
       themeMode: themeMode,
+      // Lerp the app scheme over the theme-morph duration when the selection
+      // changes, so switching themes animates the whole app.
+      themeAnimationDuration: Motion.themeMorph,
+      themeAnimationCurve: Motion.standard,
       routerConfig: appRouter,
       // The AppBackground is mounted here (above the Navigator, below all
       // routes), so every transparent-scaffold screen renders over the theme's
       // painted background. Platform brightness is resolved here where a
       // MediaQuery exists.
       builder: (BuildContext context, Widget? child) {
-        final Brightness platform = MediaQuery.platformBrightnessOf(context);
-        final VibyTheme active = themeForMode(mode, platform, amoled: amoled);
+        final VibyTheme active = resolveActiveTheme(
+          selectedId: settings.themeId,
+          systemFollow: settings.systemFollow,
+          platformBrightness: MediaQuery.platformBrightnessOf(context),
+          amoledOverride: settings.amoledOverride,
+        );
         return AppBackground(
           background: active.background,
           child: child ?? const SizedBox.shrink(),

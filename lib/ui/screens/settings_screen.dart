@@ -4,13 +4,16 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
+import '../../core/pro.dart';
 import '../../core/router.dart';
 import '../../data/sources/local/permission_service.dart';
 import '../../state/haptics_providers.dart';
 import '../../state/library_providers.dart';
 import '../../state/theme_providers.dart';
-import '../theme/dynamic_theme.dart';
+import '../theme/theme_collection.dart';
 import '../theme/tokens.dart';
+import '../theme/viby_theme.dart';
+import '../widgets/theme_preview_card.dart';
 
 /// Settings: rescan (with progress), a theme stub, the Developer section
 /// (throwaway debug tools) and an About placeholder.
@@ -111,60 +114,83 @@ class SettingsScreen extends ConsumerWidget {
   }
 }
 
-/// Real theme controls: mode (system/light/dark/amoled) + the album-art
-/// dynamic-colour toggle.
+/// Appearance: the theme gallery (live preview cards) + system-follow, AMOLED
+/// override and dynamic-colour toggles.
 class _AppearanceSection extends ConsumerWidget {
   const _AppearanceSection();
-
-  static const Map<VibyThemeMode, String> _labels = <VibyThemeMode, String>{
-    VibyThemeMode.system: 'System',
-    VibyThemeMode.light: 'Light',
-    VibyThemeMode.dark: 'Dark',
-    VibyThemeMode.amoled: 'AMOLED',
-  };
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final ThemeSettingsState settings = ref.watch(themeSettingsProvider);
     final ThemeSettings controller = ref.read(themeSettingsProvider.notifier);
+
+    // The active theme (drives which toggles are enabled).
+    final VibyTheme active = resolveActiveTheme(
+      selectedId: settings.themeId,
+      systemFollow: settings.systemFollow,
+      platformBrightness: MediaQuery.platformBrightnessOf(context),
+      amoledOverride: settings.amoledOverride,
+    );
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
         const Padding(
           padding: EdgeInsets.fromLTRB(Spacing.lg, Spacing.sm, Spacing.lg, 0),
-          child: Row(
-            children: <Widget>[
-              Icon(Icons.brightness_6_outlined),
-              SizedBox(width: Spacing.lg),
-              Text('Theme'),
-            ],
+          child: Text('Theme'),
+        ),
+        SizedBox(
+          height: 190,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.fromLTRB(
+                Spacing.lg, Spacing.sm, Spacing.lg, Spacing.sm),
+            itemCount: kThemeCollection.length,
+            separatorBuilder: (_, __) => const SizedBox(width: Spacing.md),
+            itemBuilder: (BuildContext context, int i) {
+              final VibyTheme t = kThemeCollection[i];
+              final bool selected =
+                  !settings.systemFollow && settings.themeId == t.id;
+              return ThemePreviewCard(
+                theme: t,
+                selected: selected,
+                onTap: () {
+                  if (!kProThemesUnlocked && t.isPro) return; // TODO(3.4): paywall
+                  controller.selectTheme(t.id);
+                },
+              );
+            },
           ),
         ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(
-              Spacing.lg, Spacing.sm, Spacing.lg, Spacing.sm),
-          child: SizedBox(
-            width: double.infinity,
-            child: SegmentedButton<VibyThemeMode>(
-              segments: <ButtonSegment<VibyThemeMode>>[
-                for (final MapEntry<VibyThemeMode, String> e in _labels.entries)
-                  ButtonSegment<VibyThemeMode>(value: e.key, label: Text(e.value)),
-              ],
-              selected: <VibyThemeMode>{settings.mode},
-              showSelectedIcon: false,
-              onSelectionChanged: (Set<VibyThemeMode> s) =>
-                  controller.setMode(s.first),
-            ),
+        SwitchListTile(
+          secondary: const Icon(Icons.brightness_auto_outlined),
+          title: const Text('Follow system light/dark'),
+          subtitle: const Text('Use Classic Light or Dark to match your device'),
+          value: settings.systemFollow,
+          onChanged: controller.setSystemFollow,
+        ),
+        SwitchListTile(
+          secondary: const Icon(Icons.contrast),
+          title: const Text('AMOLED black'),
+          subtitle: Text(
+            active.isDark
+                ? 'Pure-black surfaces on dark themes'
+                : 'Only affects dark themes',
           ),
+          value: settings.amoledOverride,
+          onChanged: active.isDark ? controller.setAmoledOverride : null,
         ),
         SwitchListTile(
           secondary: const Icon(Icons.palette_outlined),
           title: const Text('Dynamic color from artwork'),
-          subtitle: const Text(
-            'Now Playing tints to the current album art',
+          subtitle: Text(
+            active.acceptsDynamicSeed
+                ? 'Now Playing tints to the current album art'
+                : '${active.name} keeps its own colours',
           ),
           value: settings.dynamicColor,
-          onChanged: controller.setDynamicColor,
+          onChanged:
+              active.acceptsDynamicSeed ? controller.setDynamicColor : null,
         ),
       ],
     );

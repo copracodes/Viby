@@ -5,57 +5,134 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 import '../ui/theme/dynamic_theme.dart';
+import '../ui/theme/theme_collection.dart';
 import 'database_providers.dart';
 import 'library_providers.dart';
 import 'queue_provider.dart';
 
 part 'theme_providers.g.dart';
 
-/// Persisted theme settings: the [VibyThemeMode] and whether album-art dynamic
-/// colour is on.
+/// Persisted appearance settings (Step 3.2):
+/// - [themeId] — the selected [VibyTheme] from the collection.
+/// - [systemFollow] — follow the platform light/dark, mapping to the Classic
+///   pair (overrides [themeId] for resolution).
+/// - [amoledOverride] — force pure-black surfaces on any dark theme.
+/// - [dynamicColor] — let album art tint the accent on accepting themes.
 class ThemeSettingsState {
-  const ThemeSettingsState({required this.mode, required this.dynamicColor});
+  const ThemeSettingsState({
+    required this.themeId,
+    required this.systemFollow,
+    required this.amoledOverride,
+    required this.dynamicColor,
+  });
 
-  final VibyThemeMode mode;
+  final String themeId;
+  final bool systemFollow;
+  final bool amoledOverride;
   final bool dynamicColor;
 
-  ThemeSettingsState copyWith({VibyThemeMode? mode, bool? dynamicColor}) =>
+  ThemeSettingsState copyWith({
+    String? themeId,
+    bool? systemFollow,
+    bool? amoledOverride,
+    bool? dynamicColor,
+  }) =>
       ThemeSettingsState(
-        mode: mode ?? this.mode,
+        themeId: themeId ?? this.themeId,
+        systemFollow: systemFollow ?? this.systemFollow,
+        amoledOverride: amoledOverride ?? this.amoledOverride,
         dynamicColor: dynamicColor ?? this.dynamicColor,
       );
 }
 
-/// Owns the theme settings, persisting them to the [PreferencesDao]. `build()`
-/// returns defaults synchronously (so the app can theme on first frame) then
-/// hydrates from drift; setters update state and persist.
+/// Owns appearance settings, persisting them to the [PreferencesDao] (the v4 KV
+/// store — theme selection is a preference, so no schema migration is needed).
+/// `build()` returns defaults synchronously (so the first frame themes
+/// correctly) then hydrates from drift, including a one-time migration of the
+/// legacy `theme_mode` value.
 @Riverpod(keepAlive: true)
 class ThemeSettings extends _$ThemeSettings {
-  static const String _modeKey = 'theme_mode';
+  static const String _themeIdKey = 'theme_id';
+  static const String _systemFollowKey = 'theme_system_follow';
+  static const String _amoledKey = 'theme_amoled';
   static const String _dynamicKey = 'dynamic_color';
+  static const String _legacyModeKey = 'theme_mode';
 
   @override
   ThemeSettingsState build() {
     unawaited(_hydrate());
     return const ThemeSettingsState(
-      mode: VibyThemeMode.system,
+      themeId: kDefaultThemeId,
+      systemFollow: true,
+      amoledOverride: false,
       dynamicColor: true,
     );
   }
 
   Future<void> _hydrate() async {
     final dao = ref.read(vibyDatabaseProvider).preferencesDao;
-    final String? modeStr = await dao.get(_modeKey);
+    final String? themeId = await dao.get(_themeIdKey);
     final String? dynStr = await dao.get(_dynamicKey);
+
+    if (themeId == null) {
+      // No new-format selection yet — migrate the legacy theme_mode value once.
+      final ThemeSettingsState migrated =
+          _fromLegacyMode(await dao.get(_legacyModeKey));
+      state = migrated.copyWith(
+        dynamicColor: dynStr == null ? state.dynamicColor : dynStr == '1',
+      );
+      return;
+    }
+
     state = ThemeSettingsState(
-      mode: _parseMode(modeStr) ?? state.mode,
+      themeId: themeById(themeId) != null ? themeId : kDefaultThemeId,
+      systemFollow: (await dao.get(_systemFollowKey)) == '1',
+      amoledOverride: (await dao.get(_amoledKey)) == '1',
       dynamicColor: dynStr == null ? state.dynamicColor : dynStr == '1',
     );
   }
 
-  Future<void> setMode(VibyThemeMode mode) async {
-    state = state.copyWith(mode: mode);
-    await ref.read(vibyDatabaseProvider).preferencesDao.set(_modeKey, mode.name);
+  /// Maps the pre-3.2 `theme_mode` value onto the new settings shape.
+  ThemeSettingsState _fromLegacyMode(String? mode) {
+    switch (mode) {
+      case 'light':
+        return state.copyWith(themeId: 'classic_light', systemFollow: false);
+      case 'dark':
+        return state.copyWith(themeId: 'classic_dark', systemFollow: false);
+      case 'amoled':
+        return state.copyWith(
+          themeId: 'classic_dark',
+          systemFollow: false,
+          amoledOverride: true,
+        );
+      case 'system':
+      default:
+        return state.copyWith(systemFollow: true);
+    }
+  }
+
+  /// Selects a specific theme (turns system-follow off).
+  Future<void> selectTheme(String id) async {
+    state = state.copyWith(themeId: id, systemFollow: false);
+    final dao = ref.read(vibyDatabaseProvider).preferencesDao;
+    await dao.set(_themeIdKey, id);
+    await dao.set(_systemFollowKey, '0');
+  }
+
+  Future<void> setSystemFollow(bool on) async {
+    state = state.copyWith(systemFollow: on);
+    final dao = ref.read(vibyDatabaseProvider).preferencesDao;
+    await dao.set(_systemFollowKey, on ? '1' : '0');
+    // Ensure a themeId is persisted so a later hydrate uses the new format.
+    await dao.set(_themeIdKey, state.themeId);
+  }
+
+  Future<void> setAmoledOverride(bool on) async {
+    state = state.copyWith(amoledOverride: on);
+    await ref
+        .read(vibyDatabaseProvider)
+        .preferencesDao
+        .set(_amoledKey, on ? '1' : '0');
   }
 
   Future<void> setDynamicColor(bool on) async {
@@ -64,13 +141,6 @@ class ThemeSettings extends _$ThemeSettings {
         .read(vibyDatabaseProvider)
         .preferencesDao
         .set(_dynamicKey, on ? '1' : '0');
-  }
-
-  static VibyThemeMode? _parseMode(String? name) {
-    for (final VibyThemeMode m in VibyThemeMode.values) {
-      if (m.name == name) return m;
-    }
-    return null;
   }
 }
 
@@ -83,8 +153,8 @@ DynamicThemeService dynamicThemeService(Ref ref) => DynamicThemeService(
 
 /// The dynamic seed [Color] for the *currently-playing* track's artwork, or null
 /// when dynamic colour is off / nothing is playing / no usable colour (callers
-/// fall back to [kBrandSeed]). This is the only place the seed is resolved, so
-/// Now Playing and the mini-player share one extraction.
+/// fall back to [kBrandSeed]). Whether it's actually applied is further gated by
+/// the active theme's `acceptsDynamicSeed` (see `effectiveScheme`).
 @riverpod
 Future<Color?> currentSeed(Ref ref) async {
   final ThemeSettingsState settings = ref.watch(themeSettingsProvider);

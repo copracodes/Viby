@@ -1,7 +1,9 @@
+import 'dart:convert';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
+import 'tokens.dart';
 import 'viby_theme.dart';
 
 /// Paints a theme's [BackgroundSpec] behind the app's (transparent) scaffolds.
@@ -22,8 +24,17 @@ class AppBackground extends StatelessWidget {
   Widget build(BuildContext context) {
     return Stack(
       children: <Widget>[
+        // Cross-fade the background layer when the theme (hence spec) changes.
         Positioned.fill(
-          child: RepaintBoundary(child: _BackgroundLayer(background)),
+          child: RepaintBoundary(
+            child: AnimatedSwitcher(
+              duration: Motion.themeMorph,
+              child: _BackgroundLayer(
+                background,
+                key: ValueKey<String>(jsonEncode(background.toJson())),
+              ),
+            ),
+          ),
         ),
         child,
       ],
@@ -32,7 +43,7 @@ class AppBackground extends StatelessWidget {
 }
 
 class _BackgroundLayer extends StatelessWidget {
-  const _BackgroundLayer(this.spec);
+  const _BackgroundLayer(this.spec, {super.key});
 
   final BackgroundSpec spec;
 

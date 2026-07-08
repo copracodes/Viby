@@ -412,3 +412,58 @@ audible with no glitches/dropouts, curve animates smoothly, 0 dB detent, presets
 apply/animate, modified-preset state, loudness enhancer, EQ persists across app
 restart, and it affects both Bluetooth and speaker output. Subsonic remains
 Phase 3.
+
+**Step 3.2 — the theme collection.** Named, hand-crafted visual themes (aurora
+gradients, glass, soft depth) that *extend* the 2.1 token + dynamic-colour
+system — the token scale, motion and the contrast guard all still apply.
+- **Model** (`ui/theme/viby_theme.dart`): `VibyTheme` = `ColorScheme` +
+  `BackgroundSpec` (sealed: solid | linearGradient | aurora `GlowBlob`s) +
+  `SurfaceSpec` (sealed: opaque | tinted | glass). Specs JSON-serialize
+  (round-trip tested). `acceptsDynamicSeed` gates whether album-art colour may
+  swap a theme's primary.
+- **The six** (`ui/theme/theme_collection.dart`, one file to tune by eye):
+  Classic Light/Dark (unchanged ids, accept dynamic seed), Midnight Aurora
+  (near-black + violet/blue/magenta glow, glass nav), Nebula (purple→plum wash,
+  pink accent, tinted), Frost (light, green-tinted glass), Onyx (charcoal, green
+  accent, NO blur — the perf-safe dark option, accepts dynamic seed). Aurora and
+  gradient themes lock their identity (no dynamic seed) so colour doesn't fight
+  the art direction; Now Playing's palette-tinted backdrop still applies
+  everywhere (contextual, per the 2.1 decision).
+- **Plumbing** (invasive, its own commit): every scaffold/app-bar/canvas is
+  transparent (theme-level, so no per-screen edits) over one `AppBackground`
+  mounted in `MaterialApp.builder`. **Aurora is a STATIC layer** — blobs
+  composed into a cached `ui.Image` once per theme+size (`toImageSync`), redrawn
+  only on theme/size change, in a `RepaintBoundary` (zero background repaints on
+  scroll). Never a live `BackdropFilter` for backgrounds.
+- **Glass budget:** the ONLY live `BackdropFilter` for chrome is the nav bar
+  (`GlassPanel`) on glass themes; cards/sheets *fake* glass with a translucent
+  tint + hairline border and let the background show through (the perf budget
+  caps live blurs at ~2: nav + an active sheet). Contrast guard runs over the
+  brightest aurora blob region and auto-darkens blob opacity if body text would
+  fail 4.5:1.
+- **Picker** (Settings › Appearance): a horizontal gallery of live preview cards
+  (real background + faux mini-player, ringed selection, Pro badge on 3-6),
+  plus system-follow, AMOLED override (forces pure-black base on dark themes;
+  aurora blobs survive on black), and the dynamic-colour toggle (disabled with
+  an explanation on non-accepting themes). Switching animates the app scheme
+  (`themeAnimationDuration = 350ms`) and cross-fades the background.
+- **Persistence:** theme selection lives in the **existing v4 Preferences KV
+  store** (`theme_id` / `theme_system_follow` / `theme_amoled` / `dynamic_color`)
+  — theme choice is a preference, not a schema change, so *no drift migration is
+  needed* (a no-op schema bump would violate the schema policy). The provider
+  hydrates and migrates the legacy `theme_mode` value once.
+
+**Pro badge pattern (established here for later gating).** Pro-marked features
+carry `ProBadge` (`ui/widgets/pro_badge.dart`) but gating is one const:
+`kProThemesUnlocked` in `core/pro.dart` (currently `true`, `TODO(3.4)`). Flip it
+to `ref.watch(proProvider)` when billing lands and gate the action (show a
+paywall) — a one-line change; the badge already renders.
+
+Analyze clean; 209 tests green (BackgroundSpec serialization, blob contrast
+guard + auto-darken, per-theme coherence, resolveActiveTheme, dynamic-seed
+gating, theme-settings persistence + legacy migration, preview-card widget
+test). **Device pass pending** (per spec): live with each theme; expect a
+tuning iteration on blob positions/opacities + glass tint values (isolated in
+`theme_collection.dart`). Verify the perf budget on S22 (fling Library in
+Midnight Aurora + Frost = zero jank; repaint-rainbow shows no aurora repaints
+on scroll; Now Playing drag 60fps on every theme). Subsonic remains Phase 3.

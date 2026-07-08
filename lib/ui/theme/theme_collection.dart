@@ -230,26 +230,6 @@ VibyTheme applyAmoled(VibyTheme theme) {
   return theme.copyWith(scheme: black, background: bg);
 }
 
-/// Bridges the legacy [VibyThemeMode] to a [VibyTheme] (Step 3.2 wiring, before
-/// the full picker). system → Classic pair by [platform]; amoled → Classic Dark
-/// on pure black.
-VibyTheme themeForMode(
-  VibyThemeMode mode,
-  Brightness platform, {
-  bool amoled = false,
-}) {
-  final VibyTheme t = switch (mode) {
-    VibyThemeMode.system =>
-      platform == Brightness.dark ? classicDark : classicLight,
-    VibyThemeMode.light => classicLight,
-    VibyThemeMode.dark => classicDark,
-    VibyThemeMode.amoled => classicDark,
-  };
-  return (amoled || mode == VibyThemeMode.amoled) && t.isDark
-      ? applyAmoled(t)
-      : t;
-}
-
 /// Resolves the active [VibyTheme] from the persisted settings + the platform
 /// brightness. Pure, so it's unit-tested.
 VibyTheme resolveActiveTheme({

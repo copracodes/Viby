@@ -5,7 +5,6 @@ import 'package:go_router/go_router.dart';
 import '../../state/queue_provider.dart';
 import '../../state/theme_providers.dart';
 import '../player/player_overlay.dart';
-import '../theme/dynamic_theme.dart';
 import '../theme/glass_panel.dart';
 import '../theme/theme_collection.dart';
 import '../theme/viby_theme.dart';
@@ -37,12 +36,12 @@ class AppShell extends ConsumerWidget {
       queueControllerProvider.select((QueueState q) => q.currentTrack != null),
     );
 
-    final VibyThemeMode mode =
-        ref.watch(themeSettingsProvider.select((ThemeSettingsState s) => s.mode));
-    final VibyTheme theme = themeForMode(
-      mode,
-      MediaQuery.platformBrightnessOf(context),
-      amoled: mode == VibyThemeMode.amoled,
+    final ThemeSettingsState settings = ref.watch(themeSettingsProvider);
+    final VibyTheme theme = resolveActiveTheme(
+      selectedId: settings.themeId,
+      systemFollow: settings.systemFollow,
+      platformBrightness: MediaQuery.platformBrightnessOf(context),
+      amoledOverride: settings.amoledOverride,
     );
 
     return Scaffold(
