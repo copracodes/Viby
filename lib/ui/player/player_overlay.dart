@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../audio/player_service.dart';
 import '../../core/display_names.dart';
+import '../../core/router.dart';
 import '../../data/models/track.dart';
 import '../../state/haptics_providers.dart';
 import '../../state/player_providers.dart';
@@ -486,6 +488,11 @@ class _FullLayout extends ConsumerWidget {
                 onPressed: onCollapse,
               ),
               const Spacer(),
+              IconButton(
+                tooltip: 'Equalizer',
+                icon: const Icon(Icons.graphic_eq),
+                onPressed: () => context.push(AppRoutes.eq),
+              ),
               IconButton(
                 tooltip: 'Queue',
                 icon: const Icon(Icons.queue_music),

@@ -35,6 +35,20 @@ This file governs every session. Read it before writing code and keep it true.
    the only places that talk to the outside world. They return domain models, not
    raw plugin/DTO types.
 
+6. **Platform effects use the capability-flag pattern.** Platform-specific audio
+   capabilities (the equalizer today; iOS/Darwin effects later) are gated behind
+   a factory that returns a *capable* implementation on supported platforms and a
+   **no-op** one elsewhere, both behind one interface — callers never branch on
+   `Platform`. The template is `audio/eq_service.dart`: `EqEngine.build()`
+   constructs the real just_audio effects + `AudioPipeline` only on Android
+   (`capable == true`) and a null-pipeline engine everywhere else; `EqService`
+   has `PlatformEqService` (real) and `NoopEqService` (`capable == false`, all
+   methods no-op, `EqRuntimeState.unsupported()`). Effects that must attach at
+   *player construction* (the pipeline) are built in `main()` before
+   `AudioService.init` and injected via provider override, exactly like
+   `PlayerService`. To add iOS EQ later: add a Darwin branch to `EqEngine.build`
+   + a Darwin path in `PlatformEqService` — no UI/state changes.
+
 ### Layer sketch
 
 ```
@@ -355,3 +369,46 @@ runs across the whole app (same `tokens.dart`, same motion):
 Pure logic (`ui/library/fast_scroll.dart`, `ui/home/home_logic.dart`) is
 unit-tested; a widget test pins the stagger's run-once behaviour. 158 tests
 green. Subsonic remains Phase 3.
+
+## Phase 3 — Pro audio
+
+**Step 3.1 — Equalizer.** A flagship Pro feature built on Android's platform
+`AudioEffect`s (capability-flag pattern, rule 6 above), so iOS/desktop degrade
+cleanly to a no-op behind one interface.
+- **Pipeline.** `audio/eq_service.dart`: `EqEngine.build()` constructs an
+  `AndroidEqualizer` + `AndroidLoudnessEnhancer` in an `AudioPipeline`
+  (Android only) — built in `main()` *before* the player (a pipeline must attach
+  at player construction) and handed to `VibyAudioHandler(eqEngine:)`; the same
+  effect instances are driven by `PlatformEqService`. The service exposes a
+  reactive `EqRuntimeState` (enabled, per-band freq+gain, min/max dB, loudness,
+  active preset, `modified`). just_audio only reports its real band layout after
+  the player first connects, so the UI shows the saved/fallback bands
+  immediately and the platform gains reconcile on first playback (no audible
+  pop); enable + loudness arm pre-playback.
+- **Persistence (schema v5).** `eq_settings` (single row) + `eq_presets` (user
+  presets), `EqDao`, migration + test. Band gains are stored as a JSON map keyed
+  by **center frequency** (not band index), so a curve saved on a 5-band device
+  restores correctly on a 3-/10-band one — the service re-normalizes onto
+  whatever bands the platform reports. Restored on launch before first playback.
+- **Presets.** Seven built-ins (Flat, Bass boost, Vocal, Rock, Jazz, Electronic,
+  Podcast) authored as frequency-response *curves* and `normalizeCurveToBands`'d
+  (log-frequency interpolation) onto the device's actual bands — never assumes a
+  band count. User custom presets: save current sliders under a name, rename,
+  delete (`audio/eq_preset.dart`, all pure + unit-tested).
+- **UI** (`ui/screens/eq_screen.dart`, entry from Now Playing overflow +
+  Settings › Audio): large master switch, preset chips (filled = active),
+  vertical per-band sliders with dB labels + a 0 dB center detent (snap within
+  ±0.5 dB), real-time. A `CustomPainter` frequency-response curve
+  (`ui/eq/eq_curve_painter.dart`, smooth Catmull-Rom spline, primary-tinted
+  fill) animates as sliders move. Loudness enhancer is a separated horizontal
+  slider with a caption. Editing an active preset shows "Custom (based on Rock)"
+  + a Save affordance (`eqStatusLabel`).
+
+184 tests green (added: preset normalization on 3/5/10-band layouts,
+frequency-keyed restore across layouts, detent snap, modified-state + status
+label, gain-map JSON round-trip, v4→v5 migration + EqDao round-trip, EQ screen
+widget test). **Device pass complete** (S22, Android 16): real-time band drags
+audible with no glitches/dropouts, curve animates smoothly, 0 dB detent, presets
+apply/animate, modified-preset state, loudness enhancer, EQ persists across app
+restart, and it affects both Bluetooth and speaker output. Subsonic remains
+Phase 3.

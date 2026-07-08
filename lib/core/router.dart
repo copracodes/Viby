@@ -6,6 +6,7 @@ import '../ui/screens/album_detail_screen.dart';
 import '../ui/screens/artist_detail_screen.dart';
 import '../ui/screens/debug_queue_screen.dart';
 import '../ui/screens/debug_scan_screen.dart';
+import '../ui/screens/eq_screen.dart';
 import '../ui/screens/home_screen.dart';
 import '../ui/screens/library_screen.dart';
 import '../ui/screens/playlist_detail_screen.dart';
@@ -28,6 +29,10 @@ class AppRoutes {
   static const String search = '/search';
   static const String settings = '/settings';
 
+  /// Equalizer — a root route so it covers the shell full-screen. Opened from
+  /// Settings › Audio and the Now Playing overflow.
+  static const String eq = '/eq';
+
   /// THROWAWAY debug routes (Phase 1.2 / 1.3), now under Settings › Developer.
   static const String debugScan = '/settings/debug-scan';
   static const String debugQueue = '/settings/debug-queue';
@@ -44,6 +49,11 @@ final GoRouter appRouter = GoRouter(
   navigatorKey: _rootNavigatorKey,
   initialLocation: AppRoutes.home,
   routes: <RouteBase>[
+    GoRoute(
+      path: AppRoutes.eq,
+      parentNavigatorKey: _rootNavigatorKey,
+      builder: (BuildContext context, GoRouterState state) => const EqScreen(),
+    ),
     StatefulShellRoute.indexedStack(
       builder: (
         BuildContext context,

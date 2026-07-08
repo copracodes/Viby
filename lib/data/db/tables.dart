@@ -179,6 +179,50 @@ class Preferences extends Table {
   Set<Column> get primaryKey => {key};
 }
 
+/// Single-row (id pinned to 0) equalizer settings (added in schema v5).
+///
+/// Band gains are stored as a JSON map keyed by **center frequency in hertz**
+/// (`{"60":3.5,"230":1.0,…}`), not by band index, so the saved curve survives a
+/// device whose equalizer reports a different band count/layout — the
+/// [EqDao]/service re-normalizes onto whatever bands the platform exposes.
+/// Passwords-style secrets aren't involved; this is plain preference data.
+@DataClassName('EqSettingsRow')
+class EqSettings extends Table {
+  IntColumn get id => integer().withDefault(const Constant(0))();
+
+  /// Master EQ switch. When false the equalizer + loudness effects are bypassed.
+  BoolColumn get enabled => boolean().withDefault(const Constant(false))();
+
+  /// Loudness-enhancer target gain in decibels (0 = off).
+  RealColumn get loudnessGain => real().withDefault(const Constant(0.0))();
+
+  /// Id of the active preset — a built-in slug (`flat`, `rock`, …) or a custom
+  /// `custom:<micros>-<rand>` id. Null once the user edits into a bespoke curve
+  /// with no backing preset.
+  TextColumn get activePresetId => text().nullable()();
+
+  /// JSON `{centerFreqHz: gainDb}` of the current band gains (see class doc).
+  TextColumn get bandGainsJson => text().withDefault(const Constant('{}'))();
+
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
+/// User-saved custom equalizer presets (added in schema v5). Built-in presets
+/// are code (see `audio/eq_preset.dart`), not rows — only user curves live here.
+/// `id` is DAO-minted (`custom:<micros>-<rand>`); [gainsJson] is the same
+/// frequency-keyed map shape as [EqSettings.bandGainsJson].
+@DataClassName('EqPresetRow')
+class EqPresets extends Table {
+  TextColumn get id => text()();
+  TextColumn get name => text()();
+  TextColumn get gainsJson => text()();
+  DateTimeColumn get dateCreated => dateTime()();
+
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
 /// Single-row table (id is pinned to 0) holding the restorable play queue.
 @DataClassName('QueueStateRow')
 class QueueState extends Table {

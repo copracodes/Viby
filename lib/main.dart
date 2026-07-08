@@ -4,8 +4,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'app.dart';
 import 'audio/audio_handler.dart';
+import 'audio/eq_service.dart';
 import 'audio/player_service.dart';
 import 'core/perf.dart';
+import 'state/eq_providers.dart';
 import 'state/player_providers.dart';
 
 Future<void> main() async {
@@ -25,10 +27,15 @@ Future<void> main() async {
   // Profile-only frame-jank logging (no-op in release).
   installFrameMonitor();
 
+  // Build the equalizer effects *before* the player — an AudioPipeline must be
+  // attached at player construction. Capability-gated: a no-op engine on
+  // platforms without EQ support (see EqEngine.build / CLAUDE.md).
+  final EqEngine eqEngine = EqEngine.build();
+
   // Start the audio_service isolate/session and get back our handler. This
   // wires the OS media session (notification, lock screen, media buttons).
   final VibyAudioHandler handler = await AudioService.init(
-    builder: VibyAudioHandler.new,
+    builder: () => VibyAudioHandler(eqEngine: eqEngine),
     config: const AudioServiceConfig(
       androidNotificationChannelId: 'com.copra.viby.playback',
       androidNotificationChannelName: 'Viby playback',
@@ -47,6 +54,7 @@ Future<void> main() async {
     ProviderScope(
       overrides: <Override>[
         playerServiceProvider.overrideWithValue(playerService),
+        eqEngineProvider.overrideWithValue(eqEngine),
       ],
       child: const VibyApp(),
     ),

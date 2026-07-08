@@ -6,6 +6,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import 'daos/cache_dao.dart';
+import 'daos/eq_dao.dart';
 import 'daos/history_dao.dart';
 import 'daos/library_dao.dart';
 import 'daos/palette_dao.dart';
@@ -37,6 +38,8 @@ part 'viby_database.g.dart';
     Searches,
     ArtworkPalettes,
     Preferences,
+    EqSettings,
+    EqPresets,
   ],
   daos: <Type>[
     LibraryDao,
@@ -48,6 +51,7 @@ part 'viby_database.g.dart';
     SearchDao,
     PaletteDao,
     PreferencesDao,
+    EqDao,
   ],
 )
 class VibyDatabase extends _$VibyDatabase {
@@ -59,7 +63,7 @@ class VibyDatabase extends _$VibyDatabase {
   VibyDatabase.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 4;
+  int get schemaVersion => 5;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -91,6 +95,11 @@ class VibyDatabase extends _$VibyDatabase {
       if (from < 4) {
         await m.createTable(artworkPalettes);
         await m.createTable(preferences);
+      }
+      // v4 → v5: equalizer settings (single row) + user custom EQ presets.
+      if (from < 5) {
+        await m.createTable(eqSettings);
+        await m.createTable(eqPresets);
       }
     },
     beforeOpen: (OpeningDetails details) async {

@@ -12,6 +12,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../data/db/tables.dart' show RepeatMode, TrackSource;
 import '../data/models/track.dart';
+import 'eq_service.dart' show EqEngine;
 import 'playback_fault.dart';
 
 /// Asset path of the placeholder cover art shown when a track has no artwork.
@@ -90,11 +91,15 @@ PlaybackState buildPlaybackState({
 /// Shuffle is handled engine-side (we own the order), so just_audio's own
 /// shuffle is kept OFF and its `currentIndex` maps 1:1 onto our queue index.
 class VibyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
-  VibyAudioHandler() {
+  /// [eqEngine] carries the equalizer/loudness [AudioPipeline] that must be
+  /// attached at player construction (see `eq_service.dart`). It's null on
+  /// platforms without EQ support, in which case the player is built plain.
+  VibyAudioHandler({EqEngine? eqEngine})
+      : _player = AudioPlayer(audioPipeline: eqEngine?.pipeline) {
     _init();
   }
 
-  final AudioPlayer _player = AudioPlayer();
+  final AudioPlayer _player;
 
   /// Domain mirror of the loaded playlist, kept in lockstep with the player's
   /// audio sources so [reorderQueue] can translate an order into moves and the
