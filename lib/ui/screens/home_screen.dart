@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/display_names.dart';
 import '../../data/db/viby_database.dart';
+import '../../data/sources/local/local_scanner.dart';
 import '../../data/sources/local/permission_service.dart';
 import '../../state/library_actions.dart';
 import '../../state/library_providers.dart';
@@ -38,7 +39,23 @@ class _HomeContent extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final int topCount =
         ref.watch(topTracksProvider).valueOrNull?.length ?? 0;
+    // A slim progress hint while a scan runs with content already showing
+    // (e.g. an incremental rescan, or the tail of the first scan after the
+    // first chunk has populated the strips).
+    final bool scanning = ref.watch(libraryScanProvider) is LibraryScanRunning;
 
+    return Column(
+      children: <Widget>[
+        SizedBox(
+          height: 2,
+          child: scanning ? const LinearProgressIndicator(minHeight: 2) : null,
+        ),
+        Expanded(child: _content(topCount)),
+      ],
+    );
+  }
+
+  Widget _content(int topCount) {
     return CustomScrollView(
       slivers: <Widget>[
         const SliverToBoxAdapter(child: _Greeting()),
@@ -194,20 +211,124 @@ class _TrackCard extends ConsumerWidget {
   }
 }
 
-class _EmptyLibrary extends ConsumerWidget {
+/// First-run empty state. There is deliberately **no manual scan button**: once
+/// audio permission is granted the first scan starts automatically and this view
+/// becomes a friendly progress state ("Setting up your library — N songs
+/// found…"). Content appears progressively (the scanner commits in chunks), so
+/// as soon as the first tracks land the Home screen swaps to [_HomeContent].
+class _EmptyLibrary extends ConsumerStatefulWidget {
   const _EmptyLibrary();
 
-  Future<void> _scan(WidgetRef ref) async {
-    await ref.read(audioPermissionProvider.notifier).request();
-    final bool granted = ref.read(audioPermissionProvider).valueOrNull ==
-        AudioPermissionStatus.granted;
-    if (granted) await ref.read(libraryScanProvider.notifier).fullScan();
-  }
+  @override
+  ConsumerState<_EmptyLibrary> createState() => _EmptyLibraryState();
+}
+
+class _EmptyLibraryState extends ConsumerState<_EmptyLibrary> {
+  bool _autoTriggered = false;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
+    final AsyncValue<AudioPermissionStatus> permission =
+        ref.watch(audioPermissionProvider);
+    final LibraryScanState scan = ref.watch(libraryScanProvider);
+    final bool granted =
+        permission.valueOrNull == AudioPermissionStatus.granted;
+
+    // The moment permission is granted, kick off the first scan automatically —
+    // once (the guard survives rebuilds; a re-scan is impossible mid-scan).
+    if (granted && !_autoTriggered && scan is! LibraryScanRunning) {
+      _autoTriggered = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        ref.read(libraryScanProvider.notifier).autoScanIfNeeded();
+      });
+    }
+
+    if (scan is LibraryScanRunning) {
+      return _Setup(progress: scan.progress);
+    }
+    if (!granted) {
+      return _PermissionCta(
+        denied: permission.valueOrNull == AudioPermissionStatus.permanentlyDenied,
+        onGrant: () => ref.read(audioPermissionProvider.notifier).request(),
+        onOpenSettings: () =>
+            ref.read(audioPermissionProvider.notifier).openSettings(),
+      );
+    }
+    // Granted + not running: either a scan finished with no music, or we're in
+    // the brief gap before it starts.
+    return _Message(
+      icon: scan is LibraryScanDone
+          ? Icons.music_off_outlined
+          : Icons.library_music_outlined,
+      title: scan is LibraryScanDone ? 'No music found' : 'Preparing…',
+      body: scan is LibraryScanDone
+          ? 'We couldn\'t find any audio on this device.'
+          : 'Setting things up.',
+    );
+  }
+}
+
+/// The friendly first-run scan progress.
+class _Setup extends StatelessWidget {
+  const _Setup({required this.progress});
+
+  final ScanProgress progress;
+
+  @override
+  Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
-    final bool scanning = ref.watch(libraryScanProvider) is LibraryScanRunning;
+    final int found = progress.processed > 0 ? progress.processed : progress.found;
+    final String detail = switch (progress.phase) {
+      ScanPhase.querying => 'Scanning your device…',
+      ScanPhase.writing =>
+        found > 0 ? '$found songs found…' : 'Bringing your music in…',
+      ScanPhase.artwork => 'Fetching album art…',
+      ScanPhase.repair => 'Tidying up tags…',
+      ScanPhase.done => 'Almost there…',
+    };
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(Spacing.xxl),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            const SizedBox(
+              width: 40,
+              height: 40,
+              child: CircularProgressIndicator(),
+            ),
+            const SizedBox(height: Spacing.lg),
+            Text('Setting up your library', style: theme.textTheme.titleLarge),
+            const SizedBox(height: Spacing.sm),
+            Text(
+              detail,
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodyMedium
+                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Asks for audio access (first run, before any scan). Not a scan button — the
+/// scan starts automatically once access is granted.
+class _PermissionCta extends StatelessWidget {
+  const _PermissionCta({
+    required this.denied,
+    required this.onGrant,
+    required this.onOpenSettings,
+  });
+
+  final bool denied;
+  final VoidCallback onGrant;
+  final VoidCallback onOpenSettings;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(Spacing.xxl),
@@ -231,22 +352,56 @@ class _EmptyLibrary extends ConsumerWidget {
             Text('Welcome to Viby', style: theme.textTheme.headlineSmall),
             const SizedBox(height: Spacing.sm),
             Text(
-              'Scan your device to bring your music in.',
+              denied
+                  ? 'Allow access to your music in Settings to build your library.'
+                  : 'Allow access to your music and your library builds itself.',
               textAlign: TextAlign.center,
               style: theme.textTheme.bodyMedium
                   ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
             ),
             const SizedBox(height: Spacing.xl),
             FilledButton.icon(
-              onPressed: scanning ? null : () => _scan(ref),
-              icon: scanning
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.search),
-              label: Text(scanning ? 'Scanning…' : 'Scan library'),
+              onPressed: denied ? onOpenSettings : onGrant,
+              icon: Icon(denied ? Icons.settings : Icons.lock_open),
+              label: Text(denied ? 'Open Settings' : 'Allow access'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// A simple centered icon + title + body message.
+class _Message extends StatelessWidget {
+  const _Message({
+    required this.icon,
+    required this.title,
+    required this.body,
+  });
+
+  final IconData icon;
+  final String title;
+  final String body;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(Spacing.xxl),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Icon(icon, size: 44, color: theme.colorScheme.onSurfaceVariant),
+            const SizedBox(height: Spacing.lg),
+            Text(title, style: theme.textTheme.titleLarge),
+            const SizedBox(height: Spacing.sm),
+            Text(
+              body,
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodyMedium
+                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
             ),
           ],
         ),

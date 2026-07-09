@@ -13,6 +13,7 @@ import '../data/sources/local/local_scanner.dart';
 import '../data/sources/local/permission_service.dart';
 import '../data/sources/local/tag_repair_service.dart';
 import 'database_providers.dart';
+import 'scan_triggers.dart';
 
 part 'library_providers.g.dart';
 
@@ -132,6 +133,7 @@ class ScanSummary {
     required this.errors,
     required this.repaired,
     required this.elapsed,
+    this.added = 0,
   });
 
   final int tracks;
@@ -139,6 +141,10 @@ class ScanSummary {
   final int errors;
   final int repaired;
   final Duration elapsed;
+
+  /// Newly-added tracks (incremental scans only) — drives the auto-detect
+  /// "N songs added" snackbar.
+  final int added;
 }
 
 sealed class LibraryScanState {
@@ -207,6 +213,9 @@ class LibraryScan extends _$LibraryScan {
     return false;
   }
 
+  /// Preference key holding the epoch-millis of the last completed scan.
+  static const String _lastScanAtKey = 'last_scan_at';
+
   /// Runs a full scan on first launch once permission is granted and the
   /// library is still empty.
   Future<void> autoScanIfNeeded() async {
@@ -217,6 +226,30 @@ class LibraryScan extends _$LibraryScan {
     if (count == 0) fullScan();
   }
 
+  /// Runs an incremental rescan on app-resume, but only if enough time has
+  /// passed since the last scan (see [shouldResumeScan]) — cheap and idempotent,
+  /// so new music added while the app was backgrounded shows up without the user
+  /// touching anything. A no-op without permission or while a scan is running.
+  Future<void> maybeResumeScan() async {
+    if (ref.read(localScannerProvider).isScanning) return;
+    final AudioPermissionStatus permission =
+        await ref.read(audioPermissionServiceProvider).check();
+    if (permission != AudioPermissionStatus.granted) return;
+    final String? raw =
+        await ref.read(vibyDatabaseProvider).preferencesDao.get(_lastScanAtKey);
+    final DateTime? lastScan = raw == null
+        ? null
+        : DateTime.fromMillisecondsSinceEpoch(int.tryParse(raw) ?? 0);
+    if (shouldResumeScan(lastScan, DateTime.now())) {
+      await incrementalRescan();
+    }
+  }
+
+  Future<void> _recordScanTime() => ref
+      .read(vibyDatabaseProvider)
+      .preferencesDao
+      .set(_lastScanAtKey, DateTime.now().millisecondsSinceEpoch.toString());
+
   void _listen(Stream<ScanProgress> stream) {
     _subscription?.cancel();
     state = const LibraryScanRunning(
@@ -224,17 +257,21 @@ class LibraryScan extends _$LibraryScan {
     );
     _subscription = stream.listen(
       (ScanProgress progress) {
-        state = progress.phase == ScanPhase.done
-            ? LibraryScanDone(
-                ScanSummary(
-                  tracks: progress.processed,
-                  deleted: progress.deleted,
-                  errors: progress.errors,
-                  repaired: progress.repaired,
-                  elapsed: progress.elapsed,
-                ),
-              )
-            : LibraryScanRunning(progress);
+        if (progress.phase == ScanPhase.done) {
+          unawaited(_recordScanTime());
+          state = LibraryScanDone(
+            ScanSummary(
+              tracks: progress.processed,
+              deleted: progress.deleted,
+              errors: progress.errors,
+              repaired: progress.repaired,
+              elapsed: progress.elapsed,
+              added: progress.added,
+            ),
+          );
+        } else {
+          state = LibraryScanRunning(progress);
+        }
       },
       onError: (Object error, StackTrace stack) {
         state = LibraryScanError(error);

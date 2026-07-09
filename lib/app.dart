@@ -9,7 +9,9 @@ import 'core/perf.dart';
 import 'core/router.dart';
 import 'state/fault_reporter.dart';
 import 'state/history_recorder.dart';
+import 'state/library_providers.dart';
 import 'state/queue_persistence.dart';
+import 'state/scan_triggers.dart';
 import 'state/theme_providers.dart';
 import 'ui/theme/app_background.dart';
 import 'ui/theme/app_theme.dart';
@@ -27,18 +29,38 @@ class VibyApp extends ConsumerStatefulWidget {
   ConsumerState<VibyApp> createState() => _VibyAppState();
 }
 
-class _VibyAppState extends ConsumerState<VibyApp> {
+class _VibyAppState extends ConsumerState<VibyApp> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     // Start logging plays (feeds Home's "recently played").
     ref.read(historyRecorderProvider);
     // Start listening for playback faults (missing / corrupt files) so a bad
     // file is skipped-with-a-message and marked, not a stall.
     ref.read(faultReporterProvider);
+    // Start listening for auto-detected new songs (subtle snackbar on Library).
+    ref.read(newSongsReporterProvider);
     unawaited(_restoreQueue());
+    // Catch music added since the last session (cheap; gated by >5min).
+    unawaited(ref.read(libraryScanProvider.notifier).maybeResumeScan());
     // Log time-to-first-frame (profile/debug only).
     WidgetsBinding.instance.addPostFrameCallback((_) => reportColdStart());
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // On resume, pick up any music added while backgrounded (an incremental
+    // rescan, skipped if the library was scanned in the last few minutes).
+    if (state == AppLifecycleState.resumed) {
+      unawaited(ref.read(libraryScanProvider.notifier).maybeResumeScan());
+    }
   }
 
   /// Cold-start: rebuild the last queue (paused, seeked to the saved position)
