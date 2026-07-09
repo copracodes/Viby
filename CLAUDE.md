@@ -509,9 +509,8 @@ songs. Four staged commits:
 251 tests green (junk scoring incl. false-positive guards, resolveVisibility
 preservation, v5→v6 migration, per-DAO visibility filtering, liked round-trip,
 shouldResumeScan/shouldAnnounceAdded, ScanDebouncer, removeTrackById). Debug APK
-builds (native bridge compiles). **Device pass pending** (per spec): fresh
-install → grant → library fills with no button; Chrome-download an MP3 → appears
-within seconds; voicemail/voice-notes land under Auto-hidden and legit music
-does not; hide a song mid-playback; like from Now Playing → Liked Songs updates
-live; unhide an auto-hidden track and confirm a rescan doesn't re-hide it.
-Subsonic remains Phase 3.
+builds (native bridge compiles). **Device pass complete** (S22, Android 16):
+fresh install → grant → library auto-fills with no manual scan; newly downloaded
+songs appear automatically; voice recordings filtered correctly; hide/unhide
+persists across rescans; Liked Songs updates instantly and persists across
+restart; no playback/navigation regressions. Subsonic remains Phase 3.
