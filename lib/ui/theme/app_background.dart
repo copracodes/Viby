@@ -25,10 +25,21 @@ class AppBackground extends StatelessWidget {
     return Stack(
       children: <Widget>[
         // Cross-fade the background layer when the theme (hence spec) changes.
+        // The layoutBuilder forces StackFit.expand so solid/gradient layers
+        // (which have no intrinsic size) fill the screen instead of collapsing
+        // to zero under the switcher's default loose constraints.
         Positioned.fill(
           child: RepaintBoundary(
             child: AnimatedSwitcher(
               duration: Motion.themeMorph,
+              layoutBuilder: (Widget? currentChild, List<Widget> previousChildren) =>
+                  Stack(
+                fit: StackFit.expand,
+                children: <Widget>[
+                  ...previousChildren,
+                  if (currentChild != null) currentChild,
+                ],
+              ),
               child: _BackgroundLayer(
                 background,
                 key: ValueKey<String>(jsonEncode(background.toJson())),

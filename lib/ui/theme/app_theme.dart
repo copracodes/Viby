@@ -91,6 +91,19 @@ class AppTheme {
       // Classic ink ripple (InkSparkle's runtime shader fails on this device /
       // in tests).
       splashFactory: InkRipple.splashFactory,
+      // Transparent scaffolds (Step 3.2) can't use the default zoom transition:
+      // its raster snapshot paints transparent pixels black (a flash on every
+      // push), and with snapshotting off it cross-dissolves two transparent
+      // routes so the previous screen ghosts through the incoming one. A
+      // fade-through avoids both — see [_FadeThroughPageTransitionsBuilder].
+      // Tab switches are unaffected (they swap IndexedStack children, no route
+      // animation).
+      pageTransitionsTheme: const PageTransitionsTheme(
+        builders: <TargetPlatform, PageTransitionsBuilder>{
+          TargetPlatform.android: _FadeThroughPageTransitionsBuilder(),
+          TargetPlatform.iOS: _FadeThroughPageTransitionsBuilder(),
+        },
+      ),
     );
   }
 
@@ -126,5 +139,54 @@ class AppTheme {
       GlassSurface(:final double borderAlpha) =>
         BorderSide(color: scheme.onSurface.withValues(alpha: borderAlpha)),
     };
+  }
+}
+
+/// A fade-through page transition tuned for Viby's transparent scaffolds.
+///
+/// The default zoom transition assumes opaque pages: over the shared
+/// `AppBackground` it either snapshots transparent pixels to black (a flash on
+/// push) or — with snapshotting disabled — cross-dissolves two transparent
+/// routes, so the outgoing screen ghosts through the incoming one. Fade-through
+/// keeps the two apart in time: the outgoing content fades out over the first
+/// half (leaving only the shared background on screen), then the incoming
+/// content fades + scales in over the second half. No overlap → no ghost, no
+/// black frame. The background itself never moves (it lives above the Navigator
+/// in `MaterialApp.builder`), so only route *content* animates.
+class _FadeThroughPageTransitionsBuilder extends PageTransitionsBuilder {
+  const _FadeThroughPageTransitionsBuilder();
+
+  @override
+  Widget buildTransitions<T>(
+    PageRoute<T> route,
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) {
+    // Incoming (this route being revealed): fade + slight scale in, second half.
+    final Animation<double> fadeIn = CurvedAnimation(
+      parent: animation,
+      curve: const Interval(0.35, 1.0, curve: Curves.easeOut),
+      reverseCurve: const Interval(0.35, 1.0, curve: Curves.easeIn),
+    );
+    // Outgoing (this route being covered by a newer push): fade out, first half.
+    final Animation<double> fadeOut = Tween<double>(begin: 1.0, end: 0.0).animate(
+      CurvedAnimation(
+        parent: secondaryAnimation,
+        curve: const Interval(0.0, 0.5, curve: Curves.easeIn),
+        reverseCurve: const Interval(0.0, 0.5, curve: Curves.easeOut),
+      ),
+    );
+    return FadeTransition(
+      opacity: fadeOut,
+      child: FadeTransition(
+        opacity: fadeIn,
+        child: ScaleTransition(
+          scale: Tween<double>(begin: 0.94, end: 1.0).animate(fadeIn),
+          child: child,
+        ),
+      ),
+    );
   }
 }
