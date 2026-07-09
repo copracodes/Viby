@@ -467,3 +467,51 @@ tuning iteration on blob positions/opacities + glass tint values (isolated in
 `theme_collection.dart`). Verify the perf budget on S22 (fling Library in
 Midnight Aurora + Frost = zero jank; repaint-rainbow shows no aurora repaints
 on scroll; Now Playing drag 60fps on every theme). Subsonic remains Phase 3.
+
+**Step 3.3 — Library experience polish.** Zero-friction scanning, live
+auto-detection, smart junk filtering, a unified visibility model, and liked
+songs. Four staged commits:
+- **Schema v6 + smart junk filter + unified visibility.** Junk filtering no
+  longer hard-drops. `core`/`sources/local/junk_filter.dart` is a **pure**,
+  table-driven scorer (`JunkSignals` → `scoreJunk`/`isFilterHidden`): path
+  *segments* (not substrings — fixes "The Recordings" artist), recording
+  extensions (amr/3gp/awb/qcp), MediaStore type flags, recording/date-stamp
+  filenames, and an untagged-and-short signal, with **any real tag a strong
+  protective weight**. Over-threshold tracks are **stored hidden**
+  (`hiddenByFilter`), recoverable; only <5s blips are hard-dropped. Schema v5→v6
+  adds `tracks.{visibility, userOverride, liked, likedAt}` (`TrackVisibility`
+  enum: visible | hiddenByUser | hiddenByFilter). A shared `_visible` predicate
+  filters **every** track read (album/artist/search/queue-restore/history/
+  playlist counts+collage); scanner-maintenance reads stay unfiltered. The
+  scanner reads existing flags before an upsert and pure `resolveVisibility`
+  preserves like + hide/unhide across rescans (userOverride = permanent unhide).
+- **First-run auto-scan + resume + snackbar.** No manual scan button in
+  first-run: Home asks for access, then the scan auto-starts and shows friendly
+  progress; content streams in progressively (chunked upserts). `app.dart` gains
+  a `WidgetsBindingObserver` (resume + cold-boot incremental rescan, gated by
+  pure `shouldResumeScan` >5min, persisted timestamp). A keepAlive
+  `NewSongsReporter` shows a subtle "N songs added" snackbar when a rescan added
+  tracks and the user is on Library (`scan_triggers.dart`).
+- **Native MediaStore observer.** `MainActivity` registers a `ContentObserver`
+  on the audio URI → EventChannel `com.copra.viby/media_observer` (the app's
+  first platform channel; on_audio_query is pull-only). `MediaStoreObserver`
+  wraps it; a pure `ScanDebouncer` (3s quiet period) coalesces a download's
+  burst; keepAlive `MediaWatcher` runs a debounced incremental rescan on change.
+- **Hidden-songs manager + liked songs.** Track sheet gains a heart
+  (`LikeButton`, scale-pop + haptic) and "Hide song" (removes from queue,
+  advancing the playing track via `QueueController.removeTrackById`). Hidden
+  screen (`/settings/hidden`): two sections, per-row + all Unhide (sets
+  userOverride). Tracks-tab "N hidden songs" footer. **Liked Songs** is a
+  virtual collection (not a playlist): pinned card in the Playlists tab →
+  `/library/liked` (newest-liked-first, Play/Shuffle, swipe-to-unlike), heart
+  also in Now Playing.
+
+251 tests green (junk scoring incl. false-positive guards, resolveVisibility
+preservation, v5→v6 migration, per-DAO visibility filtering, liked round-trip,
+shouldResumeScan/shouldAnnounceAdded, ScanDebouncer, removeTrackById). Debug APK
+builds (native bridge compiles). **Device pass pending** (per spec): fresh
+install → grant → library fills with no button; Chrome-download an MP3 → appears
+within seconds; voicemail/voice-notes land under Auto-hidden and legit music
+does not; hide a song mid-playback; like from Now Playing → Liked Songs updates
+live; unhide an auto-hidden track and confirm a rescan doesn't re-hide it.
+Subsonic remains Phase 3.
