@@ -41,6 +41,8 @@ class _VibyAppState extends ConsumerState<VibyApp> with WidgetsBindingObserver {
     ref.read(faultReporterProvider);
     // Start listening for auto-detected new songs (subtle snackbar on Library).
     ref.read(newSongsReporterProvider);
+    // Start the native MediaStore observer (debounced auto-rescan on changes).
+    ref.read(mediaWatcherProvider);
     unawaited(_restoreQueue());
     // Catch music added since the last session (cheap; gated by >5min).
     unawaited(ref.read(libraryScanProvider.notifier).maybeResumeScan());
