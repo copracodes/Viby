@@ -148,20 +148,67 @@ class _TracksTabState extends ConsumerState<_TracksTab> {
 
   @override
   Widget build(BuildContext context) {
+    final int hiddenCount = ref.watch(hiddenTrackCountProvider).valueOrNull ?? 0;
     return _AsyncList<TrackWithMeta>(
       value: ref.watch(allTracksProvider),
       emptyLabel: 'No tracks yet.',
-      builder: (List<TrackWithMeta> tracks) => FastScrollbar(
-        controller: _scrollController,
-        labels: tracks.map((TrackWithMeta t) => t.track.title).toList(),
-        child: ListView.builder(
-          controller: _scrollController,
-          // Fixed two-line ListTile height → constant-time scroll over 10k rows.
-          itemExtent: 64,
-          itemCount: tracks.length,
-          itemBuilder: (BuildContext context, int i) => TrackTile(
-            meta: tracks[i],
-            onTap: () => playMetas(ref, tracks, startIndex: i),
+      builder: (List<TrackWithMeta> tracks) => Column(
+        children: <Widget>[
+          Expanded(
+            child: FastScrollbar(
+              controller: _scrollController,
+              labels: tracks.map((TrackWithMeta t) => t.track.title).toList(),
+              child: ListView.builder(
+                controller: _scrollController,
+                // Fixed two-line ListTile height → O(1) scroll over 10k rows.
+                itemExtent: 64,
+                itemCount: tracks.length,
+                itemBuilder: (BuildContext context, int i) => TrackTile(
+                  meta: tracks[i],
+                  onTap: () => playMetas(ref, tracks, startIndex: i),
+                ),
+              ),
+            ),
+          ),
+          if (hiddenCount > 0) _HiddenFooter(count: hiddenCount),
+        ],
+      ),
+    );
+  }
+}
+
+/// End-of-list row linking to the Hidden-songs manager (only when > 0 hidden).
+class _HiddenFooter extends StatelessWidget {
+  const _HiddenFooter({required this.count});
+
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    return Material(
+      type: MaterialType.transparency,
+      child: InkWell(
+        onTap: () => context.push(AppRoutes.hidden),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(
+              horizontal: Spacing.lg, vertical: Spacing.md),
+          child: Row(
+            children: <Widget>[
+              Icon(Icons.visibility_off_outlined,
+                  size: 20, color: theme.colorScheme.onSurfaceVariant),
+              const SizedBox(width: Spacing.md),
+              Expanded(
+                child: Text(
+                  '$count hidden ${count == 1 ? 'song' : 'songs'}',
+                  style: theme.textTheme.bodyMedium
+                      ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                ),
+              ),
+              Text('View',
+                  style: theme.textTheme.labelLarge
+                      ?.copyWith(color: theme.colorScheme.primary)),
+            ],
           ),
         ),
       ),
@@ -197,15 +244,67 @@ class _PlaylistsTab extends ConsumerWidget {
             ),
           ),
           Expanded(
-            child: playlists.isEmpty
-                ? const Center(child: Text('No playlists yet.'))
-                : GridView.builder(
-                    padding: const EdgeInsets.all(12),
-                    gridDelegate: kAlbumGridDelegate,
-                    itemCount: playlists.length,
-                    itemBuilder: (BuildContext context, int i) =>
-                        _PlaylistCard(summary: playlists[i]),
-                  ),
+            // The virtual "Liked Songs" collection is always pinned first, then
+            // the user's playlists.
+            child: GridView.builder(
+              padding: const EdgeInsets.all(12),
+              gridDelegate: kAlbumGridDelegate,
+              itemCount: playlists.length + 1,
+              itemBuilder: (BuildContext context, int i) => i == 0
+                  ? const _LikedSongsCard()
+                  : _PlaylistCard(summary: playlists[i - 1]),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The pinned "Liked Songs" collection card (filled-heart cover + live count).
+class _LikedSongsCard extends ConsumerWidget {
+  const _LikedSongsCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final ThemeData theme = Theme.of(context);
+    final int count = ref.watch(likedCountProvider).valueOrNull ?? 0;
+    return InkWell(
+      borderRadius: BorderRadius.circular(10),
+      onTap: () => context.push(AppRoutes.liked),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Expanded(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(10),
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: <Color>[
+                    theme.colorScheme.primary,
+                    theme.colorScheme.tertiary,
+                  ],
+                ),
+              ),
+              child: Center(
+                child: Icon(Icons.favorite,
+                    size: 48, color: theme.colorScheme.onPrimary),
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text('Liked Songs',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodyMedium),
+          Text(
+            '$count ${count == 1 ? 'song' : 'songs'}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.bodySmall
+                ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
           ),
         ],
       ),

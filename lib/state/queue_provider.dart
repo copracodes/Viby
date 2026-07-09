@@ -316,6 +316,20 @@ class QueueController extends _$QueueController {
     if (stop) await _sink.pause();
   }
 
+  /// Removes every occurrence of the track with [trackId] from the queue (used
+  /// when a playing/queued track is hidden). Removing the playing copy advances
+  /// to the next track via [removeAt]. Highest index first so earlier indices
+  /// stay valid as the list shrinks.
+  Future<void> removeTrackById(String trackId) async {
+    final List<int> indices = <int>[
+      for (int i = 0; i < state.tracks.length; i++)
+        if (state.tracks[i].id == trackId) i,
+    ];
+    for (final int index in indices.reversed) {
+      await removeAt(index);
+    }
+  }
+
   /// Moves the track at [from] to [to] (index in the list *after* removal),
   /// keeping the currently-playing track correctly tracked.
   Future<void> reorder(int from, int to) async {

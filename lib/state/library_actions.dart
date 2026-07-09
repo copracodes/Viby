@@ -1,8 +1,10 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/db/daos/library_dao.dart';
+import '../data/db/tables.dart';
 import '../data/db/viby_database.dart';
 import '../data/models/track.dart';
+import 'database_providers.dart';
 import 'library_providers.dart';
 import 'queue_provider.dart';
 import 'track_resolver.dart';
@@ -71,4 +73,35 @@ Future<void> playNextMeta(WidgetRef ref, TrackWithMeta meta) async {
 Future<void> addMetaToQueue(WidgetRef ref, TrackWithMeta meta) async {
   final Track track = await _resolveOne(ref, meta);
   await ref.read(queueControllerProvider.notifier).addTrack(track);
+}
+
+/// Hides [trackId] from the library (user-hidden) and removes it from the queue
+/// if present — a playing copy advances to the next track first. Instant via the
+/// visibility-filtered watch streams.
+Future<void> hideTrack(WidgetRef ref, String trackId) async {
+  await ref
+      .read(vibyDatabaseProvider)
+      .libraryDao
+      .setTrackVisibility(trackId, TrackVisibility.hiddenByUser);
+  await ref.read(queueControllerProvider.notifier).removeTrackById(trackId);
+}
+
+/// Likes / unlikes [trackId]; stamps likedAt on like (drives Liked Songs order).
+Future<void> setTrackLiked(WidgetRef ref, String trackId, bool liked) {
+  return ref.read(vibyDatabaseProvider).libraryDao.setLiked(trackId, liked);
+}
+
+/// Unhides [trackId] permanently → visible, with userOverride so a future scan
+/// never re-filters it (see [Tracks.userOverride]).
+Future<void> unhideTrack(WidgetRef ref, String trackId) {
+  return ref.read(vibyDatabaseProvider).libraryDao.setTrackVisibility(
+        trackId,
+        TrackVisibility.visible,
+        userOverride: true,
+      );
+}
+
+/// Unhides every track in a hidden bucket ("Unhide all").
+Future<void> unhideAllInBucket(WidgetRef ref, TrackVisibility bucket) {
+  return ref.read(vibyDatabaseProvider).libraryDao.unhideAll(bucket);
 }

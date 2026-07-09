@@ -357,6 +357,14 @@ class LibraryDao extends DatabaseAccessor<VibyDatabase>
         ],
       );
 
+  /// Whether [id] is currently liked — drives the heart toggle's filled state
+  /// (Now Playing + the track sheet), live.
+  Stream<bool> watchLiked(String id) {
+    return (select(tracks)..where((t) => t.id.equals(id)))
+        .watchSingleOrNull()
+        .map((TrackRow? row) => row?.liked ?? false);
+  }
+
   /// Reactive count of liked visible tracks — the Liked Songs card badge.
   Stream<int> watchLikedCount() {
     final Expression<int> count = tracks.id.count();

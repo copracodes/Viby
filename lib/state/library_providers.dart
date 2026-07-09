@@ -337,6 +337,36 @@ Stream<List<TrackRow>> topTracks(Ref ref) =>
 Stream<int> libraryTrackCount(Ref ref) =>
     ref.watch(vibyDatabaseProvider).libraryDao.watchTrackCount();
 
+/// Count of hidden tracks (user + filter) — the Tracks-tab "N hidden" footer.
+@riverpod
+Stream<int> hiddenTrackCount(Ref ref) =>
+    ref.watch(vibyDatabaseProvider).libraryDao.watchHiddenCount();
+
+/// Tracks the user hid via "Hide song" — Hidden-songs screen.
+@riverpod
+Stream<List<TrackWithMeta>> hiddenByUser(Ref ref) =>
+    ref.watch(vibyDatabaseProvider).libraryDao.watchHiddenByUser();
+
+/// Tracks the junk filter auto-hid — Hidden-songs screen.
+@riverpod
+Stream<List<TrackWithMeta>> hiddenByFilter(Ref ref) =>
+    ref.watch(vibyDatabaseProvider).libraryDao.watchHiddenByFilter();
+
+/// Liked tracks, newest-liked first — the virtual Liked Songs collection.
+@riverpod
+Stream<List<TrackWithMeta>> likedTracks(Ref ref) =>
+    ref.watch(vibyDatabaseProvider).libraryDao.watchLikedTracks();
+
+/// Count of liked tracks — the Liked Songs card badge.
+@riverpod
+Stream<int> likedCount(Ref ref) =>
+    ref.watch(vibyDatabaseProvider).libraryDao.watchLikedCount();
+
+/// Whether [trackId] is liked — the heart toggle's live filled state.
+@riverpod
+Stream<bool> trackLiked(Ref ref, String trackId) =>
+    ref.watch(vibyDatabaseProvider).libraryDao.watchLiked(trackId);
+
 /// Debounced (300ms) full-text track search — the Search screen.
 @riverpod
 Stream<List<TrackWithMeta>> trackSearch(Ref ref, String query) async* {

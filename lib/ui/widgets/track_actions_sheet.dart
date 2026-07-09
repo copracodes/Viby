@@ -6,6 +6,7 @@ import '../../data/db/daos/library_dao.dart';
 import '../../state/library_actions.dart';
 import 'add_to_playlist.dart';
 import 'album_art.dart';
+import 'like_button.dart';
 
 /// Long-press actions for a track row.
 Future<void> showTrackActions(
@@ -34,6 +35,7 @@ Future<void> showTrackActions(
               leading: AlbumArt(artworkKey: meta.track.artworkKey, size: 48),
               title: Text(meta.track.title, maxLines: 1),
               subtitle: Text(meta.artistName.artistOrUnknown, maxLines: 1),
+              trailing: LikeButton(trackId: meta.track.id),
             ),
             const Divider(height: 1),
             ListTile(
@@ -55,6 +57,12 @@ Future<void> showTrackActions(
                 Navigator.of(sheetContext).pop();
                 showAddTrackToPlaylist(context, ref, meta.track.id);
               },
+            ),
+            const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.visibility_off_outlined),
+              title: const Text('Hide song'),
+              onTap: () => act(() => hideTrack(ref, meta.track.id), 'Song hidden'),
             ),
           ],
         ),

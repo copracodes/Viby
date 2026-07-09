@@ -7,7 +7,9 @@ import '../ui/screens/artist_detail_screen.dart';
 import '../ui/screens/debug_queue_screen.dart';
 import '../ui/screens/debug_scan_screen.dart';
 import '../ui/screens/eq_screen.dart';
+import '../ui/screens/hidden_songs_screen.dart';
 import '../ui/screens/home_screen.dart';
+import '../ui/screens/liked_songs_screen.dart';
 import '../ui/screens/library_screen.dart';
 import '../ui/screens/playlist_detail_screen.dart';
 import '../ui/screens/search_screen.dart';
@@ -32,6 +34,12 @@ class AppRoutes {
   /// Equalizer — a root route so it covers the shell full-screen. Opened from
   /// Settings › Audio and the Now Playing overflow.
   static const String eq = '/eq';
+
+  /// Hidden songs manager (Settings › Library).
+  static const String hidden = '/settings/hidden';
+
+  /// The virtual Liked Songs collection (under the Library tab).
+  static const String liked = '/library/liked';
 
   /// THROWAWAY debug routes (Phase 1.2 / 1.3), now under Settings › Developer.
   static const String debugScan = '/settings/debug-scan';
@@ -97,6 +105,11 @@ final GoRouter appRouter = GoRouter(
                         playlistId: state.pathParameters['id']!,
                       ),
                 ),
+                GoRoute(
+                  path: 'liked',
+                  builder: (BuildContext context, GoRouterState state) =>
+                      const LikedSongsScreen(),
+                ),
               ],
             ),
           ],
@@ -120,6 +133,11 @@ final GoRouter appRouter = GoRouter(
               // (debug + profile, so the profile perf pass can reach them), so
               // they (and their screens) are tree-shaken out of release.
               routes: <RouteBase>[
+                GoRoute(
+                  path: 'hidden',
+                  builder: (BuildContext context, GoRouterState state) =>
+                      const HiddenSongsScreen(),
+                ),
                 if (!kReleaseMode)
                   GoRoute(
                     path: 'debug-scan',

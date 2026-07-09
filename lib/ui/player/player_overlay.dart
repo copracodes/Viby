@@ -12,6 +12,7 @@ import '../../state/queue_provider.dart';
 import '../theme/dynamic_theme_scope.dart';
 import '../theme/tokens.dart';
 import '../widgets/equalizer_bars.dart';
+import '../widgets/like_button.dart';
 import '../widgets/queue_list.dart';
 import 'artwork_stage.dart';
 import 'now_playing_backdrop.dart';
@@ -488,6 +489,7 @@ class _FullLayout extends ConsumerWidget {
                 onPressed: onCollapse,
               ),
               const Spacer(),
+              LikeButton(trackId: track.id),
               IconButton(
                 tooltip: 'Equalizer',
                 icon: const Icon(Icons.graphic_eq),

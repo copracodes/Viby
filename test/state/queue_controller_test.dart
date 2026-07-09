@@ -106,6 +106,37 @@ void main() {
     });
   });
 
+  group('removeTrackById (hide a song)', () {
+    test('removing the playing track advances to the next', () async {
+      await seed('abcde', start: 2); // current = c
+      await controller.removeTrackById('c');
+      expect(_order(state()), 'abde');
+      expect(state().currentTrack?.id, 'd'); // advanced
+    });
+
+    test('removing a not-playing track leaves the current track playing',
+        () async {
+      await seed('abcde', start: 2); // current = c
+      await controller.removeTrackById('a');
+      expect(_order(state()), 'bcde');
+      expect(state().currentTrack?.id, 'c');
+    });
+
+    test('removes every occurrence of the id', () async {
+      await controller.setQueue(_tracks('abca'), startIndex: 1); // current = b
+      await controller.removeTrackById('a');
+      expect(_order(state()), 'bc');
+      expect(state().currentTrack?.id, 'b');
+    });
+
+    test('a missing id is a no-op', () async {
+      await seed('abc', start: 1);
+      await controller.removeTrackById('z');
+      expect(_order(state()), 'abc');
+      expect(state().currentTrack?.id, 'b');
+    });
+  });
+
   group('reorder', () {
     test('moving an item across the current index (forward) tracks current',
         () async {

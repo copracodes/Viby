@@ -60,6 +60,13 @@ class SettingsScreen extends ConsumerWidget {
                     : null,
               ),
             ),
+          ListTile(
+            leading: const Icon(Icons.visibility_off_outlined),
+            title: const Text('Hidden songs'),
+            subtitle: const Text('Songs you hid · auto-hidden recordings'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => context.push(AppRoutes.hidden),
+          ),
           const Divider(),
           const _SectionHeader('Audio'),
           ListTile(
