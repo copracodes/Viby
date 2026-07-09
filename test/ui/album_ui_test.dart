@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:viby/data/db/daos/library_dao.dart';
-import 'package:viby/data/db/tables.dart' show TrackSource;
+import 'package:viby/data/db/tables.dart' show TrackSource, TrackVisibility;
 import 'package:viby/data/db/viby_database.dart';
 import 'package:viby/data/models/track.dart';
 import 'package:viby/state/library_providers.dart';
@@ -40,6 +40,9 @@ TrackRow _track(String id, String title, int trackNo) => TrackRow(
       dateAdded: DateTime(2026),
       dateModified: DateTime(2026),
       playable: true,
+      visibility: TrackVisibility.visible,
+      userOverride: false,
+      liked: false,
     );
 
 final List<TrackRow> _tracks = <TrackRow>[

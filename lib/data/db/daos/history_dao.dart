@@ -33,6 +33,7 @@ class HistoryDao extends DatabaseAccessor<VibyDatabase>
         select(tracks).join(<Join<HasResultSet, dynamic>>[
           innerJoin(playHistory, playHistory.trackId.equalsExp(tracks.id)),
         ])
+          ..where(tracks.visibility.equalsValue(TrackVisibility.visible))
           ..groupBy(<Expression<Object>>[tracks.id])
           ..orderBy(<OrderingTerm>[
             OrderingTerm(expression: lastPlayed, mode: OrderingMode.desc),
@@ -51,6 +52,7 @@ class HistoryDao extends DatabaseAccessor<VibyDatabase>
         select(tracks).join(<Join<HasResultSet, dynamic>>[
           innerJoin(playHistory, playHistory.trackId.equalsExp(tracks.id)),
         ])
+          ..where(tracks.visibility.equalsValue(TrackVisibility.visible))
           ..groupBy(<Expression<Object>>[tracks.id])
           ..orderBy(<OrderingTerm>[
             OrderingTerm(expression: playCount, mode: OrderingMode.desc),

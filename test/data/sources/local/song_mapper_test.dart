@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:on_audio_query_pluse/on_audio_query.dart';
 import 'package:viby/data/db/tables.dart';
 import 'package:viby/data/db/viby_database.dart';
+import 'package:viby/data/sources/local/junk_filter.dart';
 import 'package:viby/data/sources/local/song_mapper.dart';
 
 /// Builds a fake [SongModel] from a MediaStore-shaped map (SongModel reads its
@@ -10,6 +11,8 @@ SongModel _song({
   required int id,
   String title = 'Title',
   String data = '/storage/emulated/0/Music/song.mp3',
+  String displayNameWOExt = 'song',
+  String fileExtension = 'mp3',
   int? albumId = 10,
   String? album = 'Album',
   int? artistId = 20,
@@ -19,11 +22,18 @@ SongModel _song({
   int? dateModified = 2000,
   int? track,
   String? genre,
+  bool? isMusic,
+  bool? isRingtone,
+  bool? isNotification,
+  bool? isAlarm,
 }) {
   return SongModel(<dynamic, dynamic>{
     '_id': id,
     'title': title,
     '_data': data,
+    '_display_name': '$displayNameWOExt.$fileExtension',
+    '_display_name_wo_ext': displayNameWOExt,
+    'file_extension': fileExtension,
     'album_id': albumId,
     'album': album,
     'artist_id': artistId,
@@ -33,6 +43,10 @@ SongModel _song({
     'date_modified': dateModified,
     'track': track,
     'genre': genre,
+    'is_music': isMusic,
+    'is_ringtone': isRingtone,
+    'is_notification': isNotification,
+    'is_alarm': isAlarm,
   });
 }
 
@@ -74,38 +88,54 @@ void main() {
     });
   });
 
-  group('junk filtering', () {
-    test('keeps a normal music file', () {
-      expect(isJunkSong(_song(id: 1)), isFalse);
-      expect(songToTrackCompanionOrNull(_song(id: 1)), isNotNull);
+  group('junkSignalsFromSong adapter', () {
+    test('carries path, filename, extension, duration and type flags', () {
+      final JunkSignals s = junkSignalsFromSong(_song(
+        id: 1,
+        data: '/storage/emulated/0/Recordings/VN_01.amr',
+        displayNameWOExt: 'VN_01',
+        fileExtension: 'amr',
+        duration: 8000,
+        title: 'VN_01',
+        artist: null,
+        album: null,
+        isMusic: false,
+      ));
+      expect(s.path, '/storage/emulated/0/Recordings/VN_01.amr');
+      expect(s.fileNameNoExt, 'VN_01');
+      expect(s.fileExtension, 'amr');
+      expect(s.durationMs, 8000);
+      expect(s.isMusic, isFalse);
+      // A recording under /Recordings/ with a recording extension, untagged →
+      // stored hidden by the filter (not dropped).
+      expect(isFilterHidden(s), isTrue);
     });
 
-    test('drops tracks under the minimum duration', () {
-      expect(isJunkSong(_song(id: 1, duration: 3000)), isTrue);
-      expect(songToTrackCompanionOrNull(_song(id: 1, duration: 3000)), isNull);
+    test('a normal tagged music file is not filter-hidden', () {
+      expect(isFilterHidden(junkSignalsFromSong(_song(id: 1))), isFalse);
     });
 
-    test('drops ringtones/notifications/alarms and app-private media', () {
-      const List<String> junkPaths = <String>[
-        '/storage/emulated/0/Ringtones/ring.ogg',
-        '/storage/emulated/0/Notifications/ping.ogg',
-        '/storage/emulated/0/Alarms/wake.ogg',
-        '/storage/emulated/0/Android/media/com.app/cache.mp3',
-      ];
-      for (final String path in junkPaths) {
-        expect(
-          isJunkSong(_song(id: 1, data: path)),
-          isTrue,
-          reason: path,
-        );
-      }
+    test('companion defaults to visible, unliked, no override', () {
+      final TracksCompanion c = songToTrackCompanion(_song(id: 5));
+      expect(c.visibility.value, TrackVisibility.visible);
+      expect(c.liked.value, isFalse);
+      expect(c.userOverride.value, isFalse);
+      expect(c.likedAt.value, isNull);
     });
 
-    test('duration filter is configurable', () {
-      expect(
-        isJunkSong(_song(id: 1, duration: 3000), minDurationMs: 1000),
-        isFalse,
+    test('companion carries preserved flags when passed', () {
+      final DateTime when = DateTime(2026, 3, 4);
+      final TracksCompanion c = songToTrackCompanion(
+        _song(id: 5),
+        visibility: TrackVisibility.hiddenByUser,
+        liked: true,
+        likedAt: when,
+        userOverride: true,
       );
+      expect(c.visibility.value, TrackVisibility.hiddenByUser);
+      expect(c.liked.value, isTrue);
+      expect(c.likedAt.value, when);
+      expect(c.userOverride.value, isTrue);
     });
   });
 }

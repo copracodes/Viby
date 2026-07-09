@@ -4,8 +4,10 @@ import 'dart:developer' as developer;
 import 'package:on_audio_query_pluse/on_audio_query.dart';
 
 import '../../db/daos/library_dao.dart';
+import '../../db/tables.dart';
 import '../../db/viby_database.dart';
 import 'artwork_service.dart';
+import 'junk_filter.dart';
 import 'scan_diff.dart';
 import 'song_mapper.dart';
 import 'tag_repair_service.dart';
@@ -23,6 +25,7 @@ class ScanProgress {
     this.deleted = 0,
     this.errors = 0,
     this.repaired = 0,
+    this.added = 0,
     this.elapsed = Duration.zero,
   });
 
@@ -33,6 +36,10 @@ class ScanProgress {
   final int errors;
   final int repaired;
   final Duration elapsed;
+
+  /// Newly-added tracks this scan (incremental only; 0 on a full scan). Drives
+  /// the "N songs added" auto-detection snackbar.
+  final int added;
 }
 
 /// Scans on-device audio (via on_audio_query) into the library DB.
@@ -121,11 +128,16 @@ class LocalScanner {
       sortType: SongSortType.TITLE,
       orderType: OrderType.ASC_OR_SMALLER,
     );
+    // Hard-drop only trivially-short blips (<5s) — never stored. Everything
+    // else is kept and *scored*: recordings/ringtones are stored hidden
+    // (hiddenByFilter), not dropped, so a false positive stays recoverable.
     final List<SongModel> songs = all
-        .where((SongModel s) => !isJunkSong(s, minDurationMs: minDurationMs))
+        .where((SongModel s) => !isTooShort(s.duration ?? 0,
+            minDurationMs: minDurationMs))
         .toList();
     developer.log(
-      'query: ${songs.length} music tracks kept of ${all.length} raw entries',
+      'query: ${songs.length} entries kept (>=${minDurationMs}ms) of '
+      '${all.length} raw',
       name: 'viby.scanner',
     );
     out.add(ScanProgress(
@@ -141,6 +153,7 @@ class LocalScanner {
     // 2. DIFF (incremental only)
     List<SongModel> toWrite = songs;
     List<String> toDelete = const <String>[];
+    int addedCount = 0;
     if (incremental) {
       final List<MediaSnapshotEntry> media = songs
           .map((SongModel s) => MediaSnapshotEntry(
@@ -164,6 +177,7 @@ class LocalScanner {
           .where((SongModel s) => upsertIds.contains(localTrackId(s.id)))
           .toList();
       toDelete = diff.deleted.toList();
+      addedCount = diff.added.length;
       developer.log(
         'diff: ${diff.added.length} added, ${diff.changed.length} changed, '
         '${diff.deleted.length} deleted',
@@ -186,6 +200,23 @@ class LocalScanner {
     await _libraryDao.upsertArtists(artists.values.toList());
     await _libraryDao.upsertAlbums(albums.values.toList());
 
+    // Load the flags of any rows we're about to overwrite so a rescan preserves
+    // the user's like + hide/unhide choices (see [resolveVisibility]).
+    final Map<String, TrackFlags> existingFlags = <String, TrackFlags>{
+      for (final MapEntry<String,
+              ({TrackVisibility visibility, bool userOverride, bool liked, DateTime? likedAt})>
+          e in (await _libraryDao.trackFlags(
+        toWrite.map((SongModel s) => localTrackId(s.id)).toList(),
+      ))
+              .entries)
+        e.key: TrackFlags(
+          visibility: e.value.visibility,
+          userOverride: e.value.userOverride,
+          liked: e.value.liked,
+          likedAt: e.value.likedAt,
+        ),
+    };
+
     int processed = 0;
     out.add(ScanProgress(
       phase: ScanPhase.writing,
@@ -195,7 +226,7 @@ class LocalScanner {
     for (final List<SongModel> chunk in _chunk(toWrite, chunkSize)) {
       if (_cancelled) break;
       await _libraryDao.upsertTracks(
-        chunk.map(songToTrackCompanion).toList(),
+        chunk.map((SongModel s) => _companionFor(s, existingFlags)).toList(),
       );
       processed += chunk.length;
       out.add(ScanProgress(
@@ -285,7 +316,27 @@ class LocalScanner {
       artworkErrors,
       repaired,
       stopwatch,
+      added: addedCount,
     ));
+  }
+
+  /// Builds a track's upsert row with its resolved visibility and any preserved
+  /// like/hide flags from an existing row.
+  TracksCompanion _companionFor(
+    SongModel song,
+    Map<String, TrackFlags> existingFlags,
+  ) {
+    final TrackFlags? existing = existingFlags[localTrackId(song.id)];
+    final bool filterHidden = isFilterHidden(junkSignalsFromSong(song));
+    final TrackVisibility visibility =
+        resolveVisibility(existing: existing, filterHidden: filterHidden);
+    return songToTrackCompanion(
+      song,
+      visibility: visibility,
+      userOverride: existing?.userOverride ?? false,
+      liked: existing?.liked ?? false,
+      likedAt: existing?.likedAt,
+    );
   }
 
   ScanProgress _doneProgress(
@@ -293,8 +344,9 @@ class LocalScanner {
     int deleted,
     int errors,
     int repaired,
-    Stopwatch stopwatch,
-  ) {
+    Stopwatch stopwatch, {
+    int added = 0,
+  }) {
     return ScanProgress(
       phase: ScanPhase.done,
       found: tracks,
@@ -302,6 +354,7 @@ class LocalScanner {
       deleted: deleted,
       errors: errors,
       repaired: repaired,
+      added: added,
       elapsed: stopwatch.elapsed,
     );
   }

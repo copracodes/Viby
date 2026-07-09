@@ -12,6 +12,15 @@ enum CacheState { queued, downloading, complete, error }
 /// Queue repeat behaviour persisted in [QueueState].
 enum RepeatMode { off, one, all }
 
+/// Whether a [Tracks] row is shown in the library (added in schema v6).
+///
+/// Stored as the enum *name* (`textEnum`). `visible` is the default; junk
+/// filtering marks recordings/voice-notes `hiddenByFilter` (stored, not dropped,
+/// so a false positive is recoverable), and the track long-press "Hide song"
+/// action marks a row `hiddenByUser`. Every library/search/playlist/queue read
+/// filters to `visible`; the Hidden-songs screen reads the two hidden buckets.
+enum TrackVisibility { visible, hiddenByUser, hiddenByFilter }
+
 /// Library tracks — the heart of the schema.
 ///
 /// `id` is a deterministic string (`local:<mediaStoreId>` /
@@ -44,6 +53,25 @@ class Tracks extends Table {
   /// upserts it back to true. Playback skips over unplayable tracks so a rotten
   /// file can't stall the queue.
   BoolColumn get playable => boolean().withDefault(const Constant(true))();
+
+  /// Library visibility (added in schema v6). Defaults to `visible`; junk
+  /// scoring sets `hiddenByFilter` and the user can set `hiddenByUser`. Every
+  /// track read path filters to `visible` (see [TrackVisibility]).
+  TextColumn get visibility => textEnum<TrackVisibility>()
+      .withDefault(const Constant('visible'))();
+
+  /// True once the user unhides an auto-hidden track (added in schema v6) — a
+  /// permanent "this is real music" override so future scans never re-filter it.
+  BoolColumn get userOverride =>
+      boolean().withDefault(const Constant(false))();
+
+  /// Whether the user has liked this track (added in schema v6). Drives the
+  /// virtual "Liked Songs" collection.
+  BoolColumn get liked => boolean().withDefault(const Constant(false))();
+
+  /// When the track was liked (added in schema v6); null when not liked. Liked
+  /// Songs is ordered by this, newest first.
+  DateTimeColumn get likedAt => dateTime().nullable()();
 
   @override
   Set<Column> get primaryKey => {id};

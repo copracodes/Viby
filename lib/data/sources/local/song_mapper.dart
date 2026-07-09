@@ -3,20 +3,7 @@ import 'package:on_audio_query_pluse/on_audio_query.dart';
 
 import '../../db/tables.dart';
 import '../../db/viby_database.dart';
-
-/// Minimum track length; anything shorter is treated as junk (UI SFX, voice
-/// memos, ringtone fragments). A constant so we can settle the value later.
-const int kMinTrackDurationMs = 5000;
-
-/// Path fragments (lower-cased) that mark a MediaStore entry as not-music:
-/// ringtones/notifications/alarms and app-private media under Android/.
-const List<String> kJunkPathFragments = <String>[
-  '/ringtones/',
-  '/notifications/',
-  '/alarms/',
-  '/android/media/',
-  '/android/data/',
-];
+import 'junk_filter.dart';
 
 // --- Deterministic id helpers (see CLAUDE.md ID strategy) ------------------
 
@@ -40,15 +27,24 @@ String artistIdForSong(SongModel song) {
   return 'local:artist:name:$name';
 }
 
-/// Whether a MediaStore song should be skipped (too short, or under a
-/// ringtone/notification/app-private path).
-bool isJunkSong(SongModel song, {int minDurationMs = kMinTrackDurationMs}) {
-  if ((song.duration ?? 0) < minDurationMs) return true;
-  final String path = song.data.toLowerCase();
-  for (final String fragment in kJunkPathFragments) {
-    if (path.contains(fragment)) return true;
-  }
-  return false;
+/// Extracts the plugin-free [JunkSignals] the pure scorer needs from a
+/// MediaStore [song] (filename without extension, extension, tags, type flags).
+JunkSignals junkSignalsFromSong(SongModel song) {
+  String ext = song.fileExtension.toLowerCase().trim();
+  if (ext.startsWith('.')) ext = ext.substring(1);
+  return JunkSignals(
+    path: song.data,
+    fileNameNoExt: song.displayNameWOExt,
+    fileExtension: ext,
+    durationMs: song.duration ?? 0,
+    title: song.title,
+    artist: song.artist,
+    album: song.album,
+    isMusic: song.isMusic,
+    isRingtone: song.isRingtone,
+    isNotification: song.isNotification,
+    isAlarm: song.isAlarm,
+  );
 }
 
 DateTime _epochSecondsToDate(int? seconds) =>
@@ -65,7 +61,18 @@ DateTime _epochSecondsToDate(int? seconds) =>
 }
 
 /// Maps a MediaStore song to a track upsert row (artwork resolved later).
-TracksCompanion songToTrackCompanion(SongModel song) {
+///
+/// [visibility] is decided by the scanner via the pure junk scorer +
+/// [resolveVisibility]; [liked]/[likedAt]/[userOverride] carry the values the
+/// scanner preserved from any existing row (a rescan must never clobber a user's
+/// like or hide/unhide choice).
+TracksCompanion songToTrackCompanion(
+  SongModel song, {
+  TrackVisibility visibility = TrackVisibility.visible,
+  bool userOverride = false,
+  bool liked = false,
+  DateTime? likedAt,
+}) {
   final ({int discNo, int trackNo}) numbers = splitTrackNumber(song.track);
   return TracksCompanion.insert(
     id: localTrackId(song.id),
@@ -80,15 +87,11 @@ TracksCompanion songToTrackCompanion(SongModel song) {
     genre: Value(song.genre),
     dateAdded: _epochSecondsToDate(song.dateAdded),
     dateModified: _epochSecondsToDate(song.dateModified),
+    visibility: Value(visibility),
+    userOverride: Value(userOverride),
+    liked: Value(liked),
+    likedAt: Value(likedAt),
   );
-}
-
-TracksCompanion? songToTrackCompanionOrNull(
-  SongModel song, {
-  int minDurationMs = kMinTrackDurationMs,
-}) {
-  if (isJunkSong(song, minDurationMs: minDurationMs)) return null;
-  return songToTrackCompanion(song);
 }
 
 AlbumsCompanion songToAlbumCompanion(SongModel song) {

@@ -92,6 +92,12 @@ class LibraryDao extends DatabaseAccessor<VibyDatabase>
     );
   }
 
+  /// Predicate restricting a tracks query to library-visible rows. Applied to
+  /// every track read path (album/artist/search/queue-restore/history/playlist)
+  /// so junk-hidden and user-hidden tracks never surface in browsing.
+  Expression<bool> _visible($TracksTable t) =>
+      t.visibility.equalsValue(TrackVisibility.visible);
+
   /// Album + its tracks (disc, then track number). Null while the album id is
   /// unknown; re-emits as either side changes.
   Stream<AlbumWithTracks?> watchAlbumWithTracks(String albumId) {
@@ -99,7 +105,7 @@ class LibraryDao extends DatabaseAccessor<VibyDatabase>
         (select(albums)..where((t) => t.id.equals(albumId)))
             .watchSingleOrNull();
     final Stream<List<TrackRow>> tracksStream = (select(tracks)
-          ..where((t) => t.albumId.equals(albumId))
+          ..where((t) => t.albumId.equals(albumId) & _visible(t))
           ..orderBy(<OrderClauseGenerator<$TracksTable>>[
             (t) => OrderingTerm(expression: t.discNo),
             (t) => OrderingTerm(expression: t.trackNo),
@@ -154,6 +160,7 @@ class LibraryDao extends DatabaseAccessor<VibyDatabase>
   /// The most-recently-added tracks (dateAdded desc) — the Home strip.
   Stream<List<TrackRow>> watchRecentlyAdded({int limit = 20}) {
     return (select(tracks)
+          ..where(_visible)
           ..orderBy(<OrderClauseGenerator<$TracksTable>>[
             (t) => OrderingTerm(expression: t.dateAdded, mode: OrderingMode.desc),
           ])
@@ -161,16 +168,30 @@ class LibraryDao extends DatabaseAccessor<VibyDatabase>
         .watch();
   }
 
-  /// Reactive total track count — drives library empty states.
+  /// Reactive count of *visible* tracks — drives library empty states.
   Stream<int> watchTrackCount() {
     final Expression<int> count = tracks.id.count();
-    return (selectOnly(tracks)..addColumns(<Expression<Object>>[count]))
+    return (selectOnly(tracks)
+          ..addColumns(<Expression<Object>>[count])
+          ..where(_visible(tracks)))
+        .watchSingle()
+        .map((TypedResult r) => r.read(count) ?? 0);
+  }
+
+  /// Reactive count of *hidden* tracks (user + filter) — drives the Tracks-tab
+  /// "N hidden songs" footer.
+  Stream<int> watchHiddenCount() {
+    final Expression<int> count = tracks.id.count();
+    return (selectOnly(tracks)
+          ..addColumns(<Expression<Object>>[count])
+          ..where(_visible(tracks).not()))
         .watchSingle()
         .map((TypedResult r) => r.read(count) ?? 0);
   }
 
   Stream<List<TrackRow>> watchAllTracks(TrackSortOrder sort) {
-    final SimpleSelectStatement<$TracksTable, TrackRow> query = select(tracks);
+    final SimpleSelectStatement<$TracksTable, TrackRow> query = select(tracks)
+      ..where(_visible);
     switch (sort) {
       case TrackSortOrder.titleAsc:
         query.orderBy(<OrderClauseGenerator<$TracksTable>>[
@@ -216,9 +237,10 @@ class LibraryDao extends DatabaseAccessor<VibyDatabase>
           leftOuterJoin(artists, artists.id.equalsExp(tracks.artistId)),
         ])
           ..where(
-            tracks.title.lower().like(pattern) |
-                albums.name.lower().like(pattern) |
-                artists.name.lower().like(pattern),
+            (tracks.title.lower().like(pattern) |
+                    albums.name.lower().like(pattern) |
+                    artists.name.lower().like(pattern)) &
+                _visible(tracks),
           )
           ..orderBy(<OrderingTerm>[
             OrderingTerm(expression: tracks.title.lower()),
@@ -247,7 +269,7 @@ class LibraryDao extends DatabaseAccessor<VibyDatabase>
           leftOuterJoin(albums, albums.id.equalsExp(tracks.albumId)),
           leftOuterJoin(artists, artists.id.equalsExp(tracks.artistId)),
         ])
-          ..where(tracks.id.isIn(ids));
+          ..where(tracks.id.isIn(ids) & _visible(tracks));
     final List<TypedResult> rows = await statement.get();
     return rows
         .map(
@@ -269,7 +291,7 @@ class LibraryDao extends DatabaseAccessor<VibyDatabase>
           leftOuterJoin(albums, albums.id.equalsExp(tracks.albumId)),
           leftOuterJoin(artists, artists.id.equalsExp(tracks.artistId)),
         ])
-          ..where(tracks.artistId.equals(artistId))
+          ..where(tracks.artistId.equals(artistId) & _visible(tracks))
           ..orderBy(<OrderingTerm>[
             OrderingTerm(expression: albums.name.lower()),
             OrderingTerm(expression: tracks.discNo),
@@ -285,6 +307,64 @@ class LibraryDao extends DatabaseAccessor<VibyDatabase>
           ),
         )
         .toList();
+  }
+
+  // --- Hidden + liked reads ----------------------------------------------
+
+  /// Joined `select(tracks)` restricted to [where], newest-meaningful order
+  /// supplied by [order]; shared by the hidden/liked screens.
+  Stream<List<TrackWithMeta>> _watchTracksWhere(
+    Expression<bool> where,
+    List<OrderingTerm> order,
+  ) {
+    final JoinedSelectStatement<HasResultSet, dynamic> statement =
+        select(tracks).join(<Join<HasResultSet, dynamic>>[
+          leftOuterJoin(albums, albums.id.equalsExp(tracks.albumId)),
+          leftOuterJoin(artists, artists.id.equalsExp(tracks.artistId)),
+        ])
+          ..where(where)
+          ..orderBy(order);
+    return statement.watch().map(
+      (List<TypedResult> rows) => rows
+          .map(
+            (TypedResult row) => TrackWithMeta(
+              track: row.readTable(tracks),
+              albumName: row.readTableOrNull(albums)?.name,
+              artistName: row.readTableOrNull(artists)?.name,
+            ),
+          )
+          .toList(),
+    );
+  }
+
+  /// Tracks the user hid via "Hide song" (title order) — Hidden-songs screen.
+  Stream<List<TrackWithMeta>> watchHiddenByUser() => _watchTracksWhere(
+        tracks.visibility.equalsValue(TrackVisibility.hiddenByUser),
+        <OrderingTerm>[OrderingTerm(expression: tracks.title.lower())],
+      );
+
+  /// Tracks the junk filter auto-hid (title order) — Hidden-songs screen.
+  Stream<List<TrackWithMeta>> watchHiddenByFilter() => _watchTracksWhere(
+        tracks.visibility.equalsValue(TrackVisibility.hiddenByFilter),
+        <OrderingTerm>[OrderingTerm(expression: tracks.title.lower())],
+      );
+
+  /// Liked, visible tracks — newest like first. The virtual "Liked Songs".
+  Stream<List<TrackWithMeta>> watchLikedTracks() => _watchTracksWhere(
+        tracks.liked.equals(true) & _visible(tracks),
+        <OrderingTerm>[
+          OrderingTerm(expression: tracks.likedAt, mode: OrderingMode.desc),
+        ],
+      );
+
+  /// Reactive count of liked visible tracks — the Liked Songs card badge.
+  Stream<int> watchLikedCount() {
+    final Expression<int> count = tracks.id.count();
+    return (selectOnly(tracks)
+          ..addColumns(<Expression<Object>>[count])
+          ..where(tracks.liked.equals(true) & _visible(tracks)))
+        .watchSingle()
+        .map((TypedResult r) => r.read(count) ?? 0);
   }
 
   // --- Writes (idempotent upserts for the scanner) ------------------------
@@ -317,6 +397,82 @@ class LibraryDao extends DatabaseAccessor<VibyDatabase>
   Future<void> setTrackPlayable(String id, bool playable) async {
     await (update(tracks)..where((t) => t.id.equals(id)))
         .write(TracksCompanion(playable: Value(playable)));
+  }
+
+  /// Sets a track's [Tracks.visibility]. When [userOverride] is passed it's
+  /// written too — unhiding sets it true so a future scan never re-filters the
+  /// track (see [Tracks.userOverride]).
+  Future<void> setTrackVisibility(
+    String id,
+    TrackVisibility visibility, {
+    bool? userOverride,
+  }) async {
+    await (update(tracks)..where((t) => t.id.equals(id))).write(TracksCompanion(
+      visibility: Value(visibility),
+      userOverride:
+          userOverride == null ? const Value.absent() : Value(userOverride),
+    ));
+  }
+
+  /// Unhides every track in a hidden bucket ([TrackVisibility.hiddenByUser] or
+  /// [TrackVisibility.hiddenByFilter]) → visible + userOverride. "Unhide all".
+  Future<void> unhideAll(TrackVisibility from) async {
+    await (update(tracks)..where((t) => t.visibility.equalsValue(from))).write(
+      const TracksCompanion(
+        visibility: Value(TrackVisibility.visible),
+        userOverride: Value(true),
+      ),
+    );
+  }
+
+  /// Likes/unlikes a track, stamping [Tracks.likedAt] with [at] (now) on like
+  /// and clearing it on unlike.
+  Future<void> setLiked(String id, bool liked, {DateTime? at}) async {
+    await (update(tracks)..where((t) => t.id.equals(id))).write(TracksCompanion(
+      liked: Value(liked),
+      likedAt: Value(liked ? (at ?? DateTime.now()) : null),
+    ));
+  }
+
+  /// The persisted flags of the given track ids, keyed by id — unfiltered (must
+  /// see hidden rows). The scanner reads these before an upsert so a rescan
+  /// preserves the user's like + hide/unhide choices (see resolveVisibility).
+  Future<
+      Map<
+        String,
+        ({
+          TrackVisibility visibility,
+          bool userOverride,
+          bool liked,
+          DateTime? likedAt,
+        })
+      >> trackFlags(List<String> ids) async {
+    if (ids.isEmpty) {
+      return const <String,
+          ({
+            TrackVisibility visibility,
+            bool userOverride,
+            bool liked,
+            DateTime? likedAt,
+          })>{};
+    }
+    final List<TrackRow> rows =
+        await (select(tracks)..where((t) => t.id.isIn(ids))).get();
+    return <String,
+        ({
+          TrackVisibility visibility,
+          bool userOverride,
+          bool liked,
+          DateTime? likedAt,
+        })>{
+      for (final TrackRow r in rows)
+        r.id: (
+          visibility: r.visibility,
+          userOverride: r.userOverride,
+          liked: r.liked,
+          likedAt: r.likedAt,
+        ),
+    };
   }
 
   // --- Synthetic seed data (debug) ----------------------------------------

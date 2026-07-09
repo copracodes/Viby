@@ -22,6 +22,11 @@ void main() {
     // v2 predates the v4 tables too — drop them so onUpgrade recreates them.
     await db.customStatement('DROP TABLE artwork_palettes');
     await db.customStatement('DROP TABLE preferences');
+    // v6 columns don't exist at v2 either — drop so onUpgrade re-adds them.
+    await db.customStatement('ALTER TABLE tracks DROP COLUMN visibility');
+    await db.customStatement('ALTER TABLE tracks DROP COLUMN user_override');
+    await db.customStatement('ALTER TABLE tracks DROP COLUMN liked');
+    await db.customStatement('ALTER TABLE tracks DROP COLUMN liked_at');
     await db.customStatement('PRAGMA user_version = 2');
     await db.close();
 

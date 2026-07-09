@@ -9,7 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:viby/app.dart';
 import 'package:viby/data/db/daos/library_dao.dart';
 import 'package:viby/data/db/daos/playlist_dao.dart';
-import 'package:viby/data/db/tables.dart' show TrackSource;
+import 'package:viby/data/db/tables.dart' show TrackSource, TrackVisibility;
 import 'package:viby/data/db/viby_database.dart' show ArtistRow, TrackRow;
 import 'package:viby/state/library_providers.dart';
 import 'package:viby/state/player_providers.dart';
@@ -33,6 +33,9 @@ TrackWithMeta _meta(int i) => TrackWithMeta(
         dateAdded: DateTime(2026),
         dateModified: DateTime(2026),
         playable: true,
+        visibility: TrackVisibility.visible,
+        userOverride: false,
+        liked: false,
       ),
       albumName: 'Album',
       artistName: 'Artist',

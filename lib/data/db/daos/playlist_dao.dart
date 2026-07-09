@@ -85,7 +85,8 @@ class PlaylistDao extends DatabaseAccessor<VibyDatabase>
         select(playlistEntries).join(<Join<HasResultSet, dynamic>>[
           innerJoin(tracks, tracks.id.equalsExp(playlistEntries.trackId)),
         ])
-          ..where(playlistEntries.playlistId.equals(id))
+          ..where(playlistEntries.playlistId.equals(id) &
+              tracks.visibility.equalsValue(TrackVisibility.visible))
           ..orderBy(<OrderingTerm>[
             OrderingTerm(expression: playlistEntries.position),
           ]);
@@ -112,7 +113,13 @@ class PlaylistDao extends DatabaseAccessor<VibyDatabase>
             playlistEntries,
             playlistEntries.playlistId.equalsExp(playlists.id),
           ),
-          leftOuterJoin(tracks, tracks.id.equalsExp(playlistEntries.trackId)),
+          // Visibility on the JOIN (not a WHERE) so a playlist with no visible
+          // tracks still appears with a 0 count instead of dropping out.
+          leftOuterJoin(
+            tracks,
+            tracks.id.equalsExp(playlistEntries.trackId) &
+                tracks.visibility.equalsValue(TrackVisibility.visible),
+          ),
         ])
           ..orderBy(<OrderingTerm>[
             OrderingTerm(
@@ -161,7 +168,8 @@ class PlaylistDao extends DatabaseAccessor<VibyDatabase>
           leftOuterJoin(albums, albums.id.equalsExp(tracks.albumId)),
           leftOuterJoin(artists, artists.id.equalsExp(tracks.artistId)),
         ])
-          ..where(playlistEntries.playlistId.equals(id))
+          ..where(playlistEntries.playlistId.equals(id) &
+              tracks.visibility.equalsValue(TrackVisibility.visible))
           ..orderBy(<OrderingTerm>[
             OrderingTerm(expression: playlistEntries.position),
           ]);

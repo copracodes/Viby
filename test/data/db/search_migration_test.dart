@@ -18,6 +18,10 @@ void main() {
     await db.customStatement('ALTER TABLE tracks DROP COLUMN playable');
     await db.customStatement('DROP TABLE artwork_palettes');
     await db.customStatement('DROP TABLE preferences');
+    await db.customStatement('ALTER TABLE tracks DROP COLUMN visibility');
+    await db.customStatement('ALTER TABLE tracks DROP COLUMN user_override');
+    await db.customStatement('ALTER TABLE tracks DROP COLUMN liked');
+    await db.customStatement('ALTER TABLE tracks DROP COLUMN liked_at');
     await db.customStatement('PRAGMA user_version = 1');
     await db.close();
 

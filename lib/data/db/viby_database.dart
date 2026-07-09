@@ -63,7 +63,7 @@ class VibyDatabase extends _$VibyDatabase {
   VibyDatabase.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 5;
+  int get schemaVersion => 6;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -100,6 +100,16 @@ class VibyDatabase extends _$VibyDatabase {
       if (from < 5) {
         await m.createTable(eqSettings);
         await m.createTable(eqPresets);
+      }
+      // v5 → v6: unified visibility (junk filter now hides instead of dropping)
+      // + user-hidden override + liked songs. All four default existing rows to
+      // visible / not-overridden / not-liked, so nothing changes until the next
+      // scan re-scores (previously-dropped recordings then land in hiddenByFilter).
+      if (from < 6) {
+        await m.addColumn(tracks, tracks.visibility);
+        await m.addColumn(tracks, tracks.userOverride);
+        await m.addColumn(tracks, tracks.liked);
+        await m.addColumn(tracks, tracks.likedAt);
       }
     },
     beforeOpen: (OpeningDetails details) async {
