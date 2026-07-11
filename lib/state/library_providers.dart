@@ -42,6 +42,7 @@ LocalScanner localScanner(Ref ref) => LocalScanner(
   libraryDao: ref.watch(vibyDatabaseProvider).libraryDao,
   artworkService: ref.watch(artworkServiceProvider),
   tagRepair: ref.watch(tagRepairServiceProvider),
+  lyricsDao: ref.watch(vibyDatabaseProvider).lyricsDao,
 );
 
 /// Debug-only synthetic-library seeder (Settings › Developer).

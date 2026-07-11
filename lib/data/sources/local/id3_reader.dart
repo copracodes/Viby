@@ -17,6 +17,30 @@ class Id3Tags {
   bool get isEmpty => title == null && artist == null && album == null;
 }
 
+/// One timed entry of an ID3 `SYLT` (synchronised lyrics) frame.
+class SyltEntry {
+  const SyltEntry(this.timeMs, this.text);
+  final int timeMs;
+  final String text;
+}
+
+/// Embedded lyrics extracted from an audio file's ID3 tag.
+///
+/// [unsyncedText] is the raw `USLT` text; like [Id3Tags], a Latin-1 frame is
+/// kept byte-for-byte so `bestDecoding`/`LrcParser` can recover legacy CP1256
+/// Arabic. [syncedEntries] holds `SYLT` millisecond entries when present (rare);
+/// a MPEG-frame-timed SYLT is treated as unsupported (null).
+class EmbeddedLyrics {
+  const EmbeddedLyrics({this.unsyncedText, this.syncedEntries});
+
+  final String? unsyncedText;
+  final List<SyltEntry>? syncedEntries;
+
+  bool get isEmpty =>
+      (unsyncedText == null || unsyncedText!.isEmpty) &&
+      (syncedEntries == null || syncedEntries!.isEmpty);
+}
+
 /// A minimal, dependency-free ID3 tag reader (ID3v2.2/2.3/2.4 + ID3v1).
 ///
 /// It extracts only the title/artist/album text frames — enough to repair
@@ -38,6 +62,124 @@ class Id3Reader {
       artist: v2.artist ?? v1.artist,
       album: v2.album ?? v1.album,
     );
+  }
+
+  /// Extracts embedded lyrics (`USLT`/`ULT` unsynced, `SYLT`/`SLT` synced) from
+  /// an ID3v2 tag. Returns empty when the tag carries no lyrics frame. Never
+  /// throws — any structural oddity yields empty/partial results.
+  static EmbeddedLyrics parseLyrics(Uint8List b) {
+    if (b.length < 10 || b[0] != 0x49 || b[1] != 0x44 || b[2] != 0x33) {
+      return const EmbeddedLyrics();
+    }
+    final int major = b[3];
+    final int tagSize = _synchsafe(b, 6);
+    final int end = (10 + tagSize).clamp(0, b.length);
+
+    String? unsynced;
+    List<SyltEntry>? synced;
+
+    int pos = 10;
+    final bool v22 = major == 2;
+    final int idLen = v22 ? 3 : 4;
+    final int headerLen = v22 ? 6 : 10;
+
+    while (pos + headerLen <= end) {
+      if (b[pos] == 0) break;
+      final String id = _ascii(b, pos, idLen);
+      final int size = v22
+          ? _uint24(b, pos + 3)
+          : (major == 4 ? _synchsafe(b, pos + 4) : _uint32(b, pos + 4));
+      final int dataStart = pos + headerLen;
+      final int dataEnd = dataStart + size;
+      if (size <= 0 || dataEnd > end) break;
+      final Uint8List body = Uint8List.sublistView(b, dataStart, dataEnd);
+
+      if (id == 'USLT' || id == 'ULT') {
+        unsynced ??= _decodeUsltText(body);
+      } else if (id == 'SYLT' || id == 'SLT') {
+        synced ??= _decodeSylt(body);
+      }
+      pos = dataEnd;
+    }
+    return EmbeddedLyrics(unsyncedText: unsynced, syncedEntries: synced);
+  }
+
+  /// Decodes a `USLT` body: enc(1) + language(3) + null-terminated descriptor +
+  /// the lyrics text (rest). Latin-1 text is preserved byte-for-byte.
+  static String? _decodeUsltText(Uint8List body) {
+    if (body.length < 5) return null;
+    final int enc = body[0];
+    // Skip enc(1) + lang(3), then the descriptor up to its terminator.
+    final int textStart = _afterNullTerminated(body, 4, enc);
+    if (textStart >= body.length) return null;
+    final String text =
+        _decodeString(Uint8List.sublistView(body, textStart), enc);
+    return text.isEmpty ? null : text;
+  }
+
+  /// Decodes a `SYLT` body. Only millisecond-timestamped (`timeFormat == 2`)
+  /// frames are supported; anything else (MPEG-frame timing) yields null.
+  static List<SyltEntry>? _decodeSylt(Uint8List body) {
+    if (body.length < 7) return null;
+    final int enc = body[0];
+    final int timeFormat = body[4];
+    if (timeFormat != 2) return null; // only absolute milliseconds
+    int pos = _afterNullTerminated(body, 6, enc); // skip content-type + desc
+    final List<SyltEntry> out = <SyltEntry>[];
+    while (pos < body.length) {
+      final int textEnd = _nullTerminatorIndex(body, pos, enc);
+      if (textEnd < 0 || textEnd + _nullWidth(enc) + 4 > body.length) break;
+      final String text =
+          _decodeString(Uint8List.sublistView(body, pos, textEnd), enc);
+      final int stampStart = textEnd + _nullWidth(enc);
+      final int ms = _uint32(body, stampStart);
+      out.add(SyltEntry(ms, text));
+      pos = stampStart + 4;
+    }
+    return out.isEmpty ? null : out;
+  }
+
+  /// Decodes an arbitrary text run under ID3 [encoding] (0 Latin-1, 1 UTF-16
+  /// w/ BOM, 2 UTF-16BE, 3 UTF-8). Latin-1 is preserved byte-for-byte.
+  static String _decodeString(Uint8List raw, int encoding) {
+    switch (encoding) {
+      case 1:
+        return _decodeUtf16(raw, null);
+      case 2:
+        return _decodeUtf16(raw, Endian.big);
+      case 3:
+        try {
+          return utf8.decode(raw, allowMalformed: true);
+        } catch (_) {
+          return '';
+        }
+      default:
+        return String.fromCharCodes(raw);
+    }
+  }
+
+  /// The width in bytes of a NUL terminator for [encoding] (2 for UTF-16).
+  static int _nullWidth(int encoding) => (encoding == 1 || encoding == 2) ? 2 : 1;
+
+  /// Index of the NUL terminator at/after [from] for [encoding], or -1 if none.
+  static int _nullTerminatorIndex(Uint8List b, int from, int encoding) {
+    if (encoding == 1 || encoding == 2) {
+      for (int i = from; i + 1 < b.length; i += 2) {
+        if (b[i] == 0 && b[i + 1] == 0) return i;
+      }
+      return -1;
+    }
+    for (int i = from; i < b.length; i++) {
+      if (b[i] == 0) return i;
+    }
+    return -1;
+  }
+
+  /// The index just past a null-terminated field starting at [from] under
+  /// [encoding]. If no terminator is found, returns the buffer length.
+  static int _afterNullTerminated(Uint8List b, int from, int encoding) {
+    final int t = _nullTerminatorIndex(b, from, encoding);
+    return t < 0 ? b.length : t + _nullWidth(encoding);
   }
 
   // --- ID3v2 --------------------------------------------------------------

@@ -4,6 +4,7 @@ import 'dart:developer' as developer;
 import 'package:on_audio_query_pluse/on_audio_query.dart';
 
 import '../../db/daos/library_dao.dart';
+import '../../db/daos/lyrics_dao.dart';
 import '../../db/tables.dart';
 import '../../db/viby_database.dart';
 import 'artwork_service.dart';
@@ -53,17 +54,23 @@ class LocalScanner {
     required LibraryDao libraryDao,
     required ArtworkService artworkService,
     TagRepairService? tagRepair,
+    LyricsDao? lyricsDao,
     this.chunkSize = 500,
     this.minDurationMs = kMinTrackDurationMs,
   }) : _audioQuery = audioQuery,
        _libraryDao = libraryDao,
        _artworkService = artworkService,
-       _tagRepair = tagRepair;
+       _tagRepair = tagRepair,
+       _lyricsDao = lyricsDao;
 
   final OnAudioQuery _audioQuery;
   final LibraryDao _libraryDao;
   final ArtworkService _artworkService;
   final TagRepairService? _tagRepair;
+
+  /// Optional lyrics cache — when a track's file changed, its cached lyrics are
+  /// dropped so they re-resolve on next play (deleted tracks cascade already).
+  final LyricsDao? _lyricsDao;
   final int chunkSize;
   final int minDurationMs;
 
@@ -178,6 +185,11 @@ class LocalScanner {
           .toList();
       toDelete = diff.deleted.toList();
       addedCount = diff.added.length;
+      // A changed file may have gained/edited lyrics — drop its cache so they
+      // re-resolve on next play (deleted tracks cascade their lyrics away).
+      if (diff.changed.isNotEmpty) {
+        await _lyricsDao?.deleteForTracks(diff.changed);
+      }
       developer.log(
         'diff: ${diff.added.length} added, ${diff.changed.length} changed, '
         '${diff.deleted.length} deleted',
