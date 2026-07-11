@@ -233,6 +233,36 @@ class LyricsController extends _$LyricsController {
     await ref.read(lyricsRepositoryProvider).refresh(track);
     ref.invalidate(currentLyricsProvider);
   }
+
+  /// Manual "Search online": queries LRCLIB with a user-editable [track] /
+  /// [artist]. Returns candidates (with duration) for the user to pick; a
+  /// failure yields an empty list (never throws to the UI).
+  Future<List<LrclibRecord>> searchOnline({
+    required String track,
+    required String artist,
+  }) async {
+    if (track.trim().isEmpty && artist.trim().isEmpty) {
+      return const <LrclibRecord>[];
+    }
+    try {
+      return await ref
+          .read(lrclibApiProvider)
+          .search(track: track.trim(), artist: artist.trim());
+    } catch (_) {
+      return const <LrclibRecord>[];
+    }
+  }
+
+  /// Applies a user-chosen search result to the current track (caches it as the
+  /// online result, overriding any prior) and refreshes the view.
+  Future<void> applyOnlineResult(LrclibRecord record) async {
+    final Track? track = ref.read(queueControllerProvider).currentTrack;
+    if (track == null) return;
+    final RawLyrics? raw = LrclibSource.recordToRaw(record);
+    if (raw == null) return;
+    await ref.read(lyricsRepositoryProvider).cacheRaw(track, raw);
+    ref.invalidate(currentLyricsProvider);
+  }
 }
 
 /// The auto-follow override state for the expanded lyrics view. Owns the 4s idle

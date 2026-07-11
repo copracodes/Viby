@@ -557,7 +557,60 @@ UI never branches on source, only on `isSynced`. Five staged commits:
   in v1).
 
 317 tests green; analyze clean; debug APK builds (native bridge compiles).
-**Device pass pending** (user preparing five files: normal `.lrc`, offset
-`.lrc`, embedded-USLT-only, Arabic `.lrc`, no-lyrics): verify tap-to-seek
-accuracy, the LRC `[offset]` direction, 60fps expanded-lyrics drag on the S22,
-and readability across all six themes. Subsonic remains Phase 4+.
+**Device pass complete** (five files: normal `.lrc`, offset `.lrc`,
+embedded-USLT-only, Arabic `.lrc`, no-lyrics): tap-to-seek accuracy, the LRC
+`[offset]` direction, 60fps expanded-lyrics drag on the S22, and readability
+across all six themes verified. Subsonic remains Phase 4+.
+
+**Step 4.2 — online lyrics (LRCLIB).** The final link in the resolution chain:
+sidecar → embedded synced → embedded unsynced → **online**. Still **one**
+`Lyrics` representation — LRCLIB synced/plain/instrumental all flow through the
+same parser/model; the UI never learns a new source shape. Offline-first: every
+fetch is cached permanently in drift, the feature toggles (default ON), and
+airplane mode degrades silently. Three staged commits:
+- **Schema v8 + repository plumbing.** `LyricsSource` gained `online` +
+  `instrumental`; `LyricsLines` gained a nullable `expiresAt` (schema v8:
+  `addColumn`, guarded so a `createTable` from ≤v6 doesn't double-add;
+  migration + test). `LyricsRepository` distinguishes **abstain** (a source
+  *throws* — transient: offline/timeout/wifi-gate → never cached) from **miss**
+  (returns null — definitive → cached as a `none` negative with a 14-day
+  `expiresAt` TTL, `kNegativeCacheTtl`); a `_inflight` map guards concurrent
+  fetches for the same track; instrumental caches as its own marker. Local
+  always beats online (chain order). Pure `query_cleanup.dart`
+  (`cleanLyricsQuery`: bracket/feat/dash noise, primary-artist split, `<unknown>`
+  guard) tested against real messy titles.
+- **LRCLIB source + settings.** `sources/lrclib_source.dart`: `/api/get` exact
+  (duration ±… is the accuracy weapon) then `/api/search` scored by
+  `pickBestCandidate` (duration ≤3s + strict normalized title match + artist
+  contains; ambiguity → miss, because wrong lyrics are worse than none). 8s
+  timeouts, a proper lazy `User-Agent` (package_info), 404→null / transport→throw.
+  Wi-Fi-only gate via a **native** `com.copra.viby/connectivity` MethodChannel
+  (`ConnectivityManager`, `ACCESS_NETWORK_STATE`) — chosen over
+  `connectivity_plus` (its 7.x pulls `core-ktx 1.18` → needs AGP 8.9.1; project
+  is on 8.7). Settings › Audio: "Fetch lyrics online" (default ON, discloses "Sends
+  song title & artist to LRCLIB") + "Wi-Fi only" (default off). Enabling clears
+  the negative cache so previously-missed tracks get a shot.
+- **Online UI states + manual search.** The peek shows a **shimmer** during an
+  in-flight fetch (never a spinner), an "Instrumental" affordance, and a "Search
+  for lyrics" affordance when empty + online-enabled (hidden when off). The
+  expanded view: "Instrumental" state, an online-aware empty state (Search online
+  / Enable online lyrics), a tappable **"Lyrics from LRCLIB · Wrong? Tap to
+  search"** attribution, and a "Search online" overflow item. `lyrics_search_sheet.dart`
+  is the editable escape hatch (query prefilled from `cleanLyricsQuery`, results
+  list with durations, tap-to-apply → `cacheRaw` + re-resolve).
+
+**Privacy / data-safety seam.** When "Fetch lyrics online" is ON, Viby sends the
+**cleaned song title + artist name** (and duration/album as query hints) to
+`lrclib.net` to look up lyrics. No account, device id, or other identifier is
+sent; LRCLIB is anonymous. Nothing is sent for a track that already has local
+lyrics, or at all when the toggle is OFF. Data-safety form: "App activity → other
+(song metadata for lyrics lookup); not linked to identity; not shared onward."
+**Network audit:** `lrclib.net` is the *only* runtime network destination in the
+app (the queue/library/EQ are fully local; on_audio_query is pull-only). Verify
+with a proxy/airplane-mode toggle-off pass that no request leaves the device once
+the setting is disabled.
+
+376 tests green; analyze clean; debug APK builds (native connectivity channel
+compiles). **Device pass pending** (user: 10 songs with no local lyrics → hit
+rate; airplane-mode silent degrade; mismatch → manual search rescue; toggle-off
+network audit). Subsonic remains Phase 4+.

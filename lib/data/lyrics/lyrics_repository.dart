@@ -146,6 +146,35 @@ class LyricsRepository {
     return lyricsFor(track, refresh: true);
   }
 
+  /// Caches a caller-supplied result (the manual "Search online" escape hatch),
+  /// overriding whatever was there. Parses + upserts like the auto path.
+  Future<Lyrics> cacheRaw(Track track, RawLyrics raw) async {
+    if (raw.instrumental) {
+      await _dao.upsert(
+        trackId: track.id,
+        source: LyricsSource.instrumental,
+        synced: false,
+        rawText: '',
+        parsedOk: true,
+      );
+      return const Lyrics.instrumental();
+    }
+    final ParsedLrc parsed = LrcParser.parse(raw.text);
+    if (parsed.isEmpty) return const Lyrics.none();
+    await _dao.upsert(
+      trackId: track.id,
+      source: raw.source,
+      synced: parsed.isSynced,
+      rawText: raw.text,
+      parsedOk: true,
+    );
+    return Lyrics(
+      lines: parsed.lines,
+      isSynced: parsed.isSynced,
+      source: raw.source,
+    );
+  }
+
   /// A `none` row is stale once its online-miss TTL has passed; positive results
   /// (and TTL-less local misses) never expire.
   bool _isStale(LyricsRow row) =>

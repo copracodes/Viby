@@ -104,7 +104,7 @@ class LrclibSource implements LyricsSourceResolver {
       durationSec: durationSec,
     );
     if (exact != null) {
-      final RawLyrics? raw = _convert(exact);
+      final RawLyrics? raw = recordToRaw(exact);
       if (raw != null) return raw;
     }
 
@@ -118,12 +118,13 @@ class LrclibSource implements LyricsSourceResolver {
       cleanedArtist: q.artist,
     );
     if (best == null) return null; // no confident match → miss
-    return _convert(best);
+    return recordToRaw(best);
   }
 
   /// Turns a record into [RawLyrics]: synced preferred, plain fallback,
-  /// instrumental flag honoured; a record with no usable lyrics → null.
-  static RawLyrics? _convert(LrclibRecord r) {
+  /// instrumental flag honoured; a record with no usable lyrics → null. Public
+  /// so the manual "Search online" flow can apply a user-chosen candidate.
+  static RawLyrics? recordToRaw(LrclibRecord r) {
     if (r.instrumental) return const RawLyrics.instrumental();
     final String? synced = r.syncedLyrics;
     if (synced != null && synced.trim().isNotEmpty) {

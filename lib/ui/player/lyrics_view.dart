@@ -10,6 +10,7 @@ import '../theme/tokens.dart';
 import '../widgets/album_art.dart';
 import 'lyrics_follow.dart';
 import 'lyrics_how_to.dart';
+import 'lyrics_search_sheet.dart';
 import 'player_progress.dart';
 import 'player_transport.dart';
 
@@ -131,7 +132,7 @@ class _LyricsViewState extends ConsumerState<LyricsView> {
             Expanded(
               child: lyricsAsync.when(
                 loading: () => const SizedBox.shrink(),
-                error: (_, __) => _Empty(scheme: scheme),
+                error: (_, __) => const _Empty(),
                 data: (Lyrics lyrics) => _body(context, lyrics, scheme),
               ),
             ),
@@ -150,7 +151,8 @@ class _LyricsViewState extends ConsumerState<LyricsView> {
   }
 
   Widget _body(BuildContext context, Lyrics lyrics, ColorScheme scheme) {
-    if (lyrics.isEmpty) return _Empty(scheme: scheme);
+    if (lyrics.isInstrumental) return _Instrumental(scheme: scheme);
+    if (lyrics.isEmpty) return const _Empty();
     _ensureKeys(lyrics.lines.length);
     final int active = ref.watch(lyricsActiveIndexProvider);
     final bool paused =
@@ -201,10 +203,23 @@ class _LyricsViewState extends ConsumerState<LyricsView> {
         ),
         if (paused)
           Positioned(
-            bottom: Spacing.md,
+            bottom: Spacing.xxl,
             left: 0,
             right: 0,
             child: Center(child: _ResumePill(onTap: _resume)),
+          ),
+        // Attribution for online-sourced lyrics — tappable to re-search when the
+        // auto-match is wrong.
+        if (lyrics.isOnline)
+          Positioned(
+            bottom: Spacing.xs,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: _Attribution(
+                onTap: () => showLyricsSearchSheet(context),
+              ),
+            ),
           ),
       ],
     );
@@ -272,16 +287,24 @@ class _Header extends ConsumerWidget {
               switch (v) {
                 case 'refresh':
                   ref.read(lyricsControllerProvider.notifier).refresh();
+                case 'search':
+                  showLyricsSearchSheet(context);
                 case 'howto':
                   showHowToAddLyricsSheet(context);
               }
             },
-            itemBuilder: (BuildContext context) => const <PopupMenuEntry<String>>[
-              PopupMenuItem<String>(
+            itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
+              const PopupMenuItem<String>(
                 value: 'refresh',
                 child: Text('Refresh lyrics'),
               ),
-              PopupMenuItem<String>(
+              if (ref.watch(onlineLyricsSettingsProvider
+                  .select((OnlineLyricsState s) => s.enabled)))
+                const PopupMenuItem<String>(
+                  value: 'search',
+                  child: Text('Search online'),
+                ),
+              const PopupMenuItem<String>(
                 value: 'howto',
                 child: Text('How to add lyrics'),
               ),
@@ -419,12 +442,17 @@ class _ResumePill extends StatelessWidget {
   }
 }
 
-class _Empty extends StatelessWidget {
-  const _Empty({required this.scheme});
-  final ColorScheme scheme;
+/// The empty state, online-aware: when online lyrics are on it offers "Search
+/// online"; when off it offers to enable them. Always offers "How to add lyrics".
+class _Empty extends ConsumerWidget {
+  const _Empty();
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    final bool onlineEnabled = ref.watch(onlineLyricsSettingsProvider
+        .select((OnlineLyricsState s) => s.enabled));
+
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -439,6 +467,21 @@ class _Empty extends StatelessWidget {
                 ?.copyWith(color: scheme.onSurfaceVariant),
           ),
           const SizedBox(height: Spacing.sm),
+          if (onlineEnabled)
+            FilledButton.tonalIcon(
+              onPressed: () => showLyricsSearchSheet(context),
+              icon: const Icon(Icons.search),
+              label: const Text('Search online'),
+            )
+          else
+            FilledButton.tonalIcon(
+              onPressed: () => ref
+                  .read(onlineLyricsSettingsProvider.notifier)
+                  .setEnabled(true),
+              icon: const Icon(Icons.cloud_download_outlined),
+              label: const Text('Enable online lyrics'),
+            ),
+          const SizedBox(height: Spacing.xs),
           TextButton.icon(
             onPressed: () => showHowToAddLyricsSheet(context),
             icon: const Icon(Icons.help_outline),
@@ -446,6 +489,51 @@ class _Empty extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// The confirmed-instrumental state (LRCLIB flag).
+class _Instrumental extends StatelessWidget {
+  const _Instrumental({required this.scheme});
+  final ColorScheme scheme;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Icon(Icons.music_note, size: 48, color: scheme.onSurfaceVariant),
+          const SizedBox(height: Spacing.md),
+          Text(
+            'Instrumental',
+            style: Theme.of(context)
+                .textTheme
+                .titleMedium
+                ?.copyWith(color: scheme.onSurfaceVariant),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// "Lyrics from LRCLIB" attribution, tappable to re-search on a mismatch.
+class _Attribution extends StatelessWidget {
+  const _Attribution({required this.onTap});
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    return TextButton(
+      onPressed: onTap,
+      style: TextButton.styleFrom(
+        foregroundColor: scheme.onSurfaceVariant,
+        textStyle: Theme.of(context).textTheme.labelMedium,
+      ),
+      child: const Text('Lyrics from LRCLIB · Wrong? Tap to search'),
     );
   }
 }
