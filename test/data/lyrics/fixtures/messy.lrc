@@ -1,0 +1,8 @@
+[ti:Messy]
+this line has no timestamp and is dropped in synced mode
+[00:30.00]Out of order later line
+[garbage tag]
+[00:10.00]Earlier line that sorts first
+[00:20.500]Millisecond precision line
+
+[00:25.00]

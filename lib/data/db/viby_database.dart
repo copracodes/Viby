@@ -9,6 +9,7 @@ import 'daos/cache_dao.dart';
 import 'daos/eq_dao.dart';
 import 'daos/history_dao.dart';
 import 'daos/library_dao.dart';
+import 'daos/lyrics_dao.dart';
 import 'daos/palette_dao.dart';
 import 'daos/playlist_dao.dart';
 import 'daos/preferences_dao.dart';
@@ -40,6 +41,7 @@ part 'viby_database.g.dart';
     Preferences,
     EqSettings,
     EqPresets,
+    LyricsLines,
   ],
   daos: <Type>[
     LibraryDao,
@@ -52,6 +54,7 @@ part 'viby_database.g.dart';
     PaletteDao,
     PreferencesDao,
     EqDao,
+    LyricsDao,
   ],
 )
 class VibyDatabase extends _$VibyDatabase {
@@ -63,7 +66,7 @@ class VibyDatabase extends _$VibyDatabase {
   VibyDatabase.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 6;
+  int get schemaVersion => 7;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -110,6 +113,10 @@ class VibyDatabase extends _$VibyDatabase {
         await m.addColumn(tracks, tracks.userOverride);
         await m.addColumn(tracks, tracks.liked);
         await m.addColumn(tracks, tracks.likedAt);
+      }
+      // v6 → v7: cached lyrics (sidecar .lrc / embedded), one row per track.
+      if (from < 7) {
+        await m.createTable(lyricsLines);
       }
     },
     beforeOpen: (OpeningDetails details) async {

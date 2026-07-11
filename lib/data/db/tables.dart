@@ -12,6 +12,15 @@ enum CacheState { queued, downloading, complete, error }
 /// Queue repeat behaviour persisted in [QueueState].
 enum RepeatMode { off, one, all }
 
+/// Where a track's cached [LyricsLines] came from (added in schema v7).
+///
+/// Resolution priority (first hit wins): `sidecarLrc` (a `.lrc` next to the
+/// audio file or under a `/Lyrics/` folder) → `embeddedSynced` (an ID3 SYLT
+/// frame, rare) → `embeddedUnsynced` (ID3 USLT / Vorbis LYRICS comment, static
+/// display) → `none` (a negative-cache marker so we don't re-scan disk every
+/// play; "Refresh lyrics" / a rescan clears it). Stored as the enum *name*.
+enum LyricsSource { sidecarLrc, embeddedSynced, embeddedUnsynced, none }
+
 /// Whether a [Tracks] row is shown in the library (added in schema v6).
 ///
 /// Stored as the enum *name* (`textEnum`). `visible` is the default; junk
@@ -249,6 +258,29 @@ class EqPresets extends Table {
 
   @override
   Set<Column> get primaryKey => {id};
+}
+
+/// Cached resolved lyrics, one row per track (added in schema v7). Deleting a
+/// track cascades its lyrics away; the incremental scanner also deletes the row
+/// when a track's `dateModified` changes so lyrics re-resolve on next play.
+///
+/// [rawText] is the original document (LRC / plain), re-parsed on read by
+/// `LrcParser` so the parser can evolve without a migration; [synced] /
+/// [parsedOk] are denormalized flags for cheap "has synced lyrics" checks
+/// without parsing. A [LyricsSource.none] row is a negative cache (no lyrics
+/// found) — cleared by "Refresh lyrics" or a rescan.
+@DataClassName('LyricsRow')
+class LyricsLines extends Table {
+  TextColumn get trackId =>
+      text().references(Tracks, #id, onDelete: KeyAction.cascade)();
+  TextColumn get source => textEnum<LyricsSource>()();
+  BoolColumn get synced => boolean().withDefault(const Constant(false))();
+  TextColumn get rawText => text().withDefault(const Constant(''))();
+  BoolColumn get parsedOk => boolean().withDefault(const Constant(false))();
+  DateTimeColumn get resolvedAt => dateTime()();
+
+  @override
+  Set<Column> get primaryKey => {trackId};
 }
 
 /// Single-row table (id is pinned to 0) holding the restorable play queue.
