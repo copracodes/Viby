@@ -15,6 +15,8 @@ import '../widgets/equalizer_bars.dart';
 import '../widgets/like_button.dart';
 import '../widgets/queue_list.dart';
 import 'artwork_stage.dart';
+import 'lyrics_peek.dart';
+import 'lyrics_view.dart';
 import 'now_playing_backdrop.dart';
 import 'player_progress.dart';
 import 'player_transport.dart';
@@ -41,11 +43,15 @@ class PlayerOverlay extends ConsumerStatefulWidget {
 }
 
 class _PlayerOverlayState extends ConsumerState<PlayerOverlay>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   // Created eagerly in initState (not a lazy `late final`): the overlay may be
   // disposed while collapsed-and-empty having never accessed the controller in
   // build, and lazily creating a Ticker inside dispose() is illegal.
   late final AnimationController _c;
+
+  // Lyrics sub-state: 0 = artwork Now Playing, 1 = full-screen lyrics. Only
+  // meaningful while fully expanded (_c.value == 1); the two cross-fade.
+  late final AnimationController _lyricsC;
 
   double _dragOrigin = 0;
   double _expandDistance = 1;
@@ -58,18 +64,33 @@ class _PlayerOverlayState extends ConsumerState<PlayerOverlay>
       duration: Motion.emphasized,
       value: 0,
     );
+    _lyricsC = AnimationController(
+      vsync: this,
+      duration: Motion.emphasized,
+      value: 0,
+    );
   }
 
   @override
   void dispose() {
     _c.dispose();
+    _lyricsC.dispose();
     super.dispose();
   }
 
+  void _expandLyrics() => _lyricsC.animateTo(1,
+      duration: Motion.emphasized, curve: Motion.emphasizedDecelerate);
+  void _collapseLyrics() => _lyricsC.animateTo(0,
+      duration: Motion.emphasized, curve: Motion.emphasizedAccelerate);
+
   void _expand() =>
       _c.animateTo(1, duration: Motion.emphasized, curve: Motion.emphasizedDecelerate);
-  void _collapse() =>
-      _c.animateTo(0, duration: Motion.emphasized, curve: Motion.emphasizedAccelerate);
+  void _collapse() {
+    // Reset the lyrics sub-state so re-opening the player shows the artwork.
+    _lyricsC.value = 0;
+    _c.animateTo(0,
+        duration: Motion.emphasized, curve: Motion.emphasizedAccelerate);
+  }
 
   void _onDragStart(DragStartDetails _) => _dragOrigin = _c.value;
 
@@ -107,7 +128,7 @@ class _PlayerOverlayState extends ConsumerState<PlayerOverlay>
           _expandDistance = collapsedTop <= 0 ? 1 : collapsedTop;
 
           return AnimatedBuilder(
-            animation: _c,
+            animation: Listenable.merge(<Listenable>[_c, _lyricsC]),
             builder: (BuildContext context, _) => _buildFrame(
               context,
               track: track,
@@ -155,7 +176,9 @@ class _PlayerOverlayState extends ConsumerState<PlayerOverlay>
     final double artRadius = _lerp(Radii.sm, Radii.lg, ct);
 
     final double fadeMini = (1 - t / 0.28).clamp(0.0, 1.0);
-    final double fadeFull = ((t - 0.35) / 0.65).clamp(0.0, 1.0);
+    // Lyrics take over as `lv` rises; the artwork Now Playing fades out under it.
+    final double lv = Motion.standard.transform(_lyricsC.value.clamp(0.0, 1.0));
+    final double fadeFull = ((t - 0.35) / 0.65).clamp(0.0, 1.0) * (1 - lv);
     final bool playing = ref.watch(playingProvider).valueOrNull ?? false;
 
     return Stack(
@@ -189,6 +212,7 @@ class _PlayerOverlayState extends ConsumerState<PlayerOverlay>
               track: track,
               fadeMini: fadeMini,
               fadeFull: fadeFull,
+              artFade: 1 - lv,
               playing: playing,
               // Artwork rect translated into panel-local coordinates.
               artLocalRect: artScreen.translate(0, -panelTop),
@@ -196,9 +220,22 @@ class _PlayerOverlayState extends ConsumerState<PlayerOverlay>
               topInset: pad.top,
               onCollapse: _collapse,
               onOpenQueue: () => _openQueue(context),
+              onExpandLyrics: _expandLyrics,
             ),
           ),
         ),
+
+        // Full-screen lyrics, cross-faded above the artwork Now Playing.
+        if (lv > 0.001)
+          Positioned.fill(
+            child: IgnorePointer(
+              ignoring: lv < 0.5,
+              child: Opacity(
+                opacity: lv,
+                child: LyricsView(onCollapse: _collapseLyrics),
+              ),
+            ),
+          ),
       ],
     );
   }
@@ -249,24 +286,30 @@ class _PanelContents extends StatelessWidget {
     required this.track,
     required this.fadeMini,
     required this.fadeFull,
+    required this.artFade,
     required this.playing,
     required this.artLocalRect,
     required this.artRadius,
     required this.topInset,
     required this.onCollapse,
     required this.onOpenQueue,
+    required this.onExpandLyrics,
   });
 
   final double t;
   final Track track;
   final double fadeMini;
   final double fadeFull;
+
+  /// Shared-element artwork opacity (1 → visible, 0 → lyrics have taken over).
+  final double artFade;
   final bool playing;
   final Rect artLocalRect;
   final double artRadius;
   final double topInset;
   final VoidCallback onCollapse;
   final VoidCallback onOpenQueue;
+  final VoidCallback onExpandLyrics;
 
   @override
   Widget build(BuildContext context) {
@@ -303,21 +346,29 @@ class _PanelContents extends StatelessWidget {
                   topInset: topInset,
                   onCollapse: onCollapse,
                   onOpenQueue: onOpenQueue,
+                  onExpandLyrics: onExpandLyrics,
                 ),
               ),
             ),
           ),
 
-        // Shared-element artwork.
-        Positioned.fromRect(
-          rect: artLocalRect,
-          child: ArtworkStage(
-            size: artLocalRect.width,
-            borderRadius: artRadius,
-            enabled: t > 0.98,
-            playing: playing,
+        // Shared-element artwork (fades out as lyrics take over).
+        if (artFade > 0.001)
+          Positioned.fromRect(
+            rect: artLocalRect,
+            child: IgnorePointer(
+              ignoring: artFade < 0.5,
+              child: Opacity(
+                opacity: artFade,
+                child: ArtworkStage(
+                  size: artLocalRect.width,
+                  borderRadius: artRadius,
+                  enabled: t > 0.98 && artFade > 0.98,
+                  playing: playing,
+                ),
+              ),
+            ),
           ),
-        ),
 
         // Mini play/next controls sit to the right of the thumb (tap targets
         // above the shared artwork + panel gesture).
@@ -461,12 +512,14 @@ class _FullLayout extends ConsumerWidget {
     required this.topInset,
     required this.onCollapse,
     required this.onOpenQueue,
+    required this.onExpandLyrics,
   });
 
   final Track track;
   final double topInset;
   final VoidCallback onCollapse;
   final VoidCallback onOpenQueue;
+  final VoidCallback onExpandLyrics;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -533,6 +586,9 @@ class _FullLayout extends ConsumerWidget {
               const PlayerProgress(),
               const SizedBox(height: Spacing.sm),
               const PlayerTransport(),
+              // Lyrics peek — hidden entirely when the track has no lyrics, so
+              // the block reflows with no dead space.
+              LyricsPeek(onExpand: onExpandLyrics),
             ],
           ),
         ),
