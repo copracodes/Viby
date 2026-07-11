@@ -514,3 +514,50 @@ fresh install → grant → library auto-fills with no manual scan; newly downlo
 songs appear automatically; voice recordings filtered correctly; hide/unhide
 persists across rescans; Liked Songs updates instantly and persists across
 restart; no playback/navigation regressions. Subsonic remains Phase 3.
+
+## Phase 4 — Lyrics & beyond
+
+**Step 4.1 — the lyrics system.** Synced `.lrc` + embedded lyrics with a
+real-time scrolling Now Playing view. Every provenance (sidecar / embedded
+synced / embedded unsynced) converges on one `Lyrics`/`LyricLine` model — the
+UI never branches on source, only on `isSynced`. Five staged commits:
+- **Schema v7 + LRC parser + model.** `lib/data/lyrics/`: a `lyrics` table
+  (`LyricsDao`, cascade on track delete, migration + test) and the pure
+  `LrcParser` (+ `decodeBytes`) — timestamp variants, multi-timestamp chorus
+  expansion, `[offset:±ms]` (Wikipedia **subtract** convention — verify on
+  device), metadata-ignore, malformed-skip, sort, unsynced fallback, enhanced
+  word-level `<mm:ss.xx>` retained (v1 renders line-level; karaoke is v1.1).
+  UTF-8 BOM strip + invalid-UTF-8 → per-line `bestDecoding` CP1256 recovery
+  (reuses the mojibake decoder, never duplicated). Fixtures committed.
+- **Resolution repository + embedded reader.** `LyricsRepository` runs a
+  priority chain behind one `LyricsSourceResolver` (sidecar → embedded synced →
+  embedded unsynced → none); first non-empty hit is parsed + drift-cached, a
+  miss writes a `none` negative marker (cleared by Refresh / rescan), a flaky
+  source is skipped. `id3_reader.parseLyrics` adds USLT (Latin-1 byte-preserved)
+  + SYLT (ms → serialized to LRC; MPEG-frame timing rejected). The incremental
+  scanner drops cached lyrics for changed files.
+- **SAF sidecar grant.** A `.lrc` is a non-media file → scoped storage blocks a
+  bare `File()` read on API 33+. The user grants a folder once via
+  `ACTION_OPEN_DOCUMENT_TREE` (persistable tree URI, stored in the v4
+  Preferences KV); `MainActivity`'s second platform channel
+  (`com.copra.viby/lyrics_saf`) reads sidecars (same-dir + `/Lyrics/`) via
+  `DocumentsContract`. `SafSidecarSource` overrides the Noop seam live;
+  Settings › Audio has a "Lyrics folder" tile.
+- **Playback binding.** `state/lyrics_providers.dart`: `currentLyricsProvider`
+  rebuilds only on track change; `lyricsActiveIndexProvider` returns a narrow
+  `int` (binary search) so position ticks that don't cross a line = no rebuild;
+  tap-to-seek; `LyricsFollowController` (pure transition table + 4s auto-resume).
+- **Now Playing UI.** A "lyrics peek" under the transport (current + dimmed
+  next; hidden with no dead space when empty); `LyricsView` cross-fades
+  full-screen above the artwork (artwork → corner thumb via a second overlay
+  controller, no disruption to the shared-element drag). Active line: full
+  opacity / primary / 1.04 scale, neighbours fade, auto-scroll to ~35% viewport;
+  manual scroll pauses follow (resume pill); unsynced = static + caption; empty
+  = tasteful state + "How to add lyrics" sheet (offline-pure, no online search
+  in v1).
+
+317 tests green; analyze clean; debug APK builds (native bridge compiles).
+**Device pass pending** (user preparing five files: normal `.lrc`, offset
+`.lrc`, embedded-USLT-only, Arabic `.lrc`, no-lyrics): verify tap-to-seek
+accuracy, the LRC `[offset]` direction, 60fps expanded-lyrics drag on the S22,
+and readability across all six themes. Subsonic remains Phase 4+.
