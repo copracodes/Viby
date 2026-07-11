@@ -6,9 +6,11 @@ import 'package:package_info_plus/package_info_plus.dart';
 
 import '../../core/pro.dart';
 import '../../core/router.dart';
+import '../../data/lyrics/sources/saf_sidecar_source.dart';
 import '../../data/sources/local/permission_service.dart';
 import '../../state/haptics_providers.dart';
 import '../../state/library_providers.dart';
+import '../../state/lyrics_providers.dart';
 import '../../state/theme_providers.dart';
 import '../theme/theme_collection.dart';
 import '../theme/tokens.dart';
@@ -76,6 +78,7 @@ class SettingsScreen extends ConsumerWidget {
             trailing: const Icon(Icons.chevron_right),
             onTap: () => context.push(AppRoutes.eq),
           ),
+          const _LyricsFolderTile(),
           const Divider(),
           const _SectionHeader('Appearance'),
           const _AppearanceSection(),
@@ -261,6 +264,47 @@ class _AboutSectionState extends State<_AboutSection> {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Grants / forgets the SAF folder used to read `.lrc` sidecar lyrics. Embedded
+/// lyrics need no grant; this is only for standalone `.lrc` files (a `.lrc` is a
+/// non-media file that scoped storage blocks from a bare `File()` read).
+class _LyricsFolderTile extends ConsumerWidget {
+  const _LyricsFolderTile();
+
+  Future<void> _grant(BuildContext context, WidgetRef ref) async {
+    final bool ok = await ref.read(lyricsFolderProvider.notifier).grantFolder();
+    if (!context.mounted) return;
+    if (ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Lyrics folder granted')),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final String? folder = ref.watch(lyricsFolderProvider);
+    final bool granted = folder != null && folder.isNotEmpty;
+    return ListTile(
+      leading: const Icon(Icons.lyrics_outlined),
+      title: const Text('Lyrics folder'),
+      subtitle: Text(
+        granted
+            ? 'Reading .lrc from "${prettyTreeUriName(folder)}"'
+            : 'Grant a folder so standalone .lrc files show up',
+      ),
+      trailing: granted
+          ? IconButton(
+              tooltip: 'Forget folder',
+              icon: const Icon(Icons.close),
+              onPressed: () =>
+                  ref.read(lyricsFolderProvider.notifier).forgetFolder(),
+            )
+          : const Icon(Icons.folder_open_outlined),
+      onTap: () => _grant(context, ref),
     );
   }
 }

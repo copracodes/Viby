@@ -33,4 +33,9 @@ class PreferencesDao extends DatabaseAccessor<VibyDatabase>
       PreferencesCompanion.insert(key: key, value: value),
     );
   }
+
+  /// Removes [key] (no-op if unset).
+  Future<void> remove(String key) {
+    return (delete(preferences)..where((t) => t.key.equals(key))).go();
+  }
 }

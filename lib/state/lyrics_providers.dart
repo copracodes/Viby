@@ -5,8 +5,10 @@ import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 import '../data/lyrics/lyrics.dart';
 import '../data/lyrics/lyrics_repository.dart';
+import '../data/lyrics/lyrics_saf_channel.dart';
 import '../data/lyrics/lyrics_sync.dart';
 import '../data/lyrics/sources/embedded_lyrics_source.dart';
+import '../data/lyrics/sources/saf_sidecar_source.dart';
 import '../data/lyrics/sources/sidecar_lyrics_source.dart';
 import '../data/models/track.dart';
 import '../ui/player/lyrics_follow.dart';
@@ -17,11 +19,65 @@ import 'queue_provider.dart';
 
 part 'lyrics_providers.g.dart';
 
-/// The sidecar `.lrc` source. Until the user grants a lyrics folder this is a
-/// [NoopSidecarSource] (always misses → embedded lyrics win); Stage 3 overrides
-/// this provider with the SAF-backed source once a tree URI is granted.
+/// The platform SAF bridge (folder pick + sidecar reads). Overridable in tests.
 @Riverpod(keepAlive: true)
-SidecarLyricsSource sidecarLyricsSource(Ref ref) => const NoopSidecarSource();
+LyricsSafBridge lyricsSafBridge(Ref ref) => const PlatformLyricsSafBridge();
+
+/// The granted lyrics folder (a SAF tree URI), or null until the user grants one.
+///
+/// Hydrated from the v4 Preferences KV; [grantFolder] runs the system picker and,
+/// on success, persists the URI and clears the lyrics cache so every track
+/// re-resolves (a now-reachable sidecar outranks a previously-cached embedded
+/// fallback). [forgetFolder] drops the grant.
+@Riverpod(keepAlive: true)
+class LyricsFolder extends _$LyricsFolder {
+  static const String _key = 'lyrics_folder_uri';
+
+  @override
+  String? build() {
+    unawaited(_hydrate());
+    return null;
+  }
+
+  Future<void> _hydrate() async {
+    final String? uri =
+        await ref.read(vibyDatabaseProvider).preferencesDao.get(_key);
+    if (uri != null && uri.isNotEmpty) state = uri;
+  }
+
+  /// Runs the system folder picker. Returns true if a folder was granted.
+  Future<bool> grantFolder() async {
+    final String? uri = await ref.read(lyricsSafBridgeProvider).pickFolder();
+    if (uri == null || uri.isEmpty) return false;
+    await ref.read(vibyDatabaseProvider).preferencesDao.set(_key, uri);
+    state = uri;
+    // Re-resolve everything now that sidecars are reachable.
+    await ref.read(vibyDatabaseProvider).lyricsDao.clearAll();
+    ref.invalidate(currentLyricsProvider);
+    return true;
+  }
+
+  /// Forgets the granted folder (embedded lyrics still resolve).
+  Future<void> forgetFolder() async {
+    await ref.read(vibyDatabaseProvider).preferencesDao.remove(_key);
+    state = null;
+    await ref.read(vibyDatabaseProvider).lyricsDao.clearAll();
+    ref.invalidate(currentLyricsProvider);
+  }
+}
+
+/// The sidecar `.lrc` source: SAF-backed once a folder is granted, else a
+/// [NoopSidecarSource] (always misses → embedded lyrics win). The repository
+/// watches this, so granting/forgetting a folder rebuilds the chain live.
+@Riverpod(keepAlive: true)
+SidecarLyricsSource sidecarLyricsSource(Ref ref) {
+  final String? treeUri = ref.watch(lyricsFolderProvider);
+  if (treeUri == null || treeUri.isEmpty) return const NoopSidecarSource();
+  return SafSidecarSource(
+    treeUri: treeUri,
+    bridge: ref.watch(lyricsSafBridgeProvider),
+  );
+}
 
 /// The app-wide lyrics repository: sidecar first, then embedded (synced →
 /// unsynced), all flowing through one [Lyrics] representation.

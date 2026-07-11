@@ -59,4 +59,9 @@ class LyricsDao extends DatabaseAccessor<VibyDatabase> with _$LyricsDaoMixin {
     if (ids.isEmpty) return;
     await (delete(lyricsLines)..where((t) => t.trackId.isIn(ids))).go();
   }
+
+  /// Clears the whole lyrics cache — used when the lyrics folder grant changes,
+  /// so every track re-resolves and a now-reachable sidecar can outrank an
+  /// embedded fallback that was cached earlier.
+  Future<void> clearAll() => delete(lyricsLines).go();
 }
