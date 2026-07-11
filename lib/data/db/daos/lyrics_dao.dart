@@ -27,6 +27,9 @@ class LyricsDao extends DatabaseAccessor<VibyDatabase> with _$LyricsDaoMixin {
   }
 
   /// Upserts the resolved lyrics for a track (idempotent by `trackId`).
+  ///
+  /// [expiresAt] is set only on a `none` row from an online miss (its 14-day
+  /// TTL); null for positive results and local-only misses.
   Future<void> upsert({
     required String trackId,
     required LyricsSource source,
@@ -34,6 +37,7 @@ class LyricsDao extends DatabaseAccessor<VibyDatabase> with _$LyricsDaoMixin {
     required String rawText,
     required bool parsedOk,
     DateTime? resolvedAt,
+    DateTime? expiresAt,
   }) {
     return into(lyricsLines).insertOnConflictUpdate(
       LyricsRow(
@@ -43,8 +47,17 @@ class LyricsDao extends DatabaseAccessor<VibyDatabase> with _$LyricsDaoMixin {
         rawText: rawText,
         parsedOk: parsedOk,
         resolvedAt: resolvedAt ?? DateTime.now(),
+        expiresAt: expiresAt,
       ),
     );
+  }
+
+  /// Clears negative-cache (`none`) rows so previously-missed tracks re-resolve
+  /// — used when the user enables online lyrics (a miss may now be fetchable).
+  Future<void> clearNegativeCache() {
+    return (delete(lyricsLines)
+          ..where((t) => t.source.equalsValue(LyricsSource.none)))
+        .go();
   }
 
   /// Drops the cached lyrics for [trackId] (used by "Refresh lyrics" and by the

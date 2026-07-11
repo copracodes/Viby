@@ -79,12 +79,25 @@ class Lyrics {
         isSynced = false,
         source = LyricsSource.none;
 
+  /// A confirmed-instrumental track (no words). Empty like [Lyrics.none] but the
+  /// UI shows "Instrumental" rather than "No lyrics".
+  const Lyrics.instrumental()
+      : lines = const <LyricLine>[],
+        isSynced = false,
+        source = LyricsSource.instrumental;
+
   final List<LyricLine> lines;
   final bool isSynced;
   final LyricsSource source;
 
   bool get isEmpty => lines.isEmpty;
   bool get isNotEmpty => lines.isNotEmpty;
+
+  /// The track is known to have no words (from an LRCLIB `instrumental` flag).
+  bool get isInstrumental => source == LyricsSource.instrumental;
+
+  /// Lyrics fetched from the online provider (LRCLIB) — drives attribution.
+  bool get isOnline => source == LyricsSource.online;
 
   @override
   String toString() =>

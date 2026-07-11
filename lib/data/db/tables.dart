@@ -12,14 +12,24 @@ enum CacheState { queued, downloading, complete, error }
 /// Queue repeat behaviour persisted in [QueueState].
 enum RepeatMode { off, one, all }
 
-/// Where a track's cached [LyricsLines] came from (added in schema v7).
+/// Where a track's cached [LyricsLines] came from (added in schema v7;
+/// `online`/`instrumental` added in schema v8).
 ///
 /// Resolution priority (first hit wins): `sidecarLrc` (a `.lrc` next to the
 /// audio file or under a `/Lyrics/` folder) → `embeddedSynced` (an ID3 SYLT
 /// frame, rare) → `embeddedUnsynced` (ID3 USLT / Vorbis LYRICS comment, static
-/// display) → `none` (a negative-cache marker so we don't re-scan disk every
-/// play; "Refresh lyrics" / a rescan clears it). Stored as the enum *name*.
-enum LyricsSource { sidecarLrc, embeddedSynced, embeddedUnsynced, none }
+/// display) → `online` (fetched from LRCLIB) → `none` (a negative-cache marker
+/// so we don't re-resolve every play; a `none` row from an online miss carries
+/// an [LyricsLines.expiresAt] TTL). `instrumental` is a *positive* result (the
+/// track has no words) cached permanently. Stored as the enum *name*.
+enum LyricsSource {
+  sidecarLrc,
+  embeddedSynced,
+  embeddedUnsynced,
+  online,
+  instrumental,
+  none,
+}
 
 /// Whether a [Tracks] row is shown in the library (added in schema v6).
 ///
@@ -278,6 +288,12 @@ class LyricsLines extends Table {
   TextColumn get rawText => text().withDefault(const Constant(''))();
   BoolColumn get parsedOk => boolean().withDefault(const Constant(false))();
   DateTimeColumn get resolvedAt => dateTime()();
+
+  /// Negative-cache expiry (added in schema v8): set only on a `none` row that
+  /// came from an *online* miss (now + 14 days), so a song the community may add
+  /// later is retried after the TTL. Null = permanent (positive results, and
+  /// local-only misses cleared explicitly on toggle/grant/rescan).
+  DateTimeColumn get expiresAt => dateTime().nullable()();
 
   @override
   Set<Column> get primaryKey => {trackId};

@@ -66,7 +66,7 @@ class VibyDatabase extends _$VibyDatabase {
   VibyDatabase.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 7;
+  int get schemaVersion => 8;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -117,6 +117,13 @@ class VibyDatabase extends _$VibyDatabase {
       // v6 → v7: cached lyrics (sidecar .lrc / embedded), one row per track.
       if (from < 7) {
         await m.createTable(lyricsLines);
+      }
+      // v7 → v8: online lyrics — a negative-cache TTL column. Only add it when
+      // the table already existed at v7; migrating from < 7 just created the
+      // table above with the current (v8) shape, so a second addColumn would be
+      // a duplicate.
+      if (from >= 7 && from < 8) {
+        await m.addColumn(lyricsLines, lyricsLines.expiresAt);
       }
     },
     beforeOpen: (OpeningDetails details) async {
