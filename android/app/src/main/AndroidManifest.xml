@@ -2,8 +2,13 @@
 
     <!-- ============================ PERMISSIONS ============================ -->
 
-    <!-- Streaming (Subsonic), artwork downloads (dio / cached_network_image). -->
+    <!-- Streaming (Subsonic), artwork downloads (dio / cached_network_image),
+         online lyrics (LRCLIB). -->
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Read the active network's metered/transport type for the online-lyrics
+         "Wi-Fi only" gate (ConnectivityManager). No network traffic itself. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <!-- Run audio_service as a foreground service so playback survives when the
          app is backgrounded. Required from Android 9 (API 28). -->

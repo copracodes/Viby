@@ -1,8 +1,11 @@
 package com.copra.viby
 
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.database.ContentObserver
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
@@ -36,6 +39,33 @@ class MainActivity : AudioServiceActivity() {
         super.configureFlutterEngine(flutterEngine)
         registerMediaObserver(flutterEngine)
         registerLyricsSaf(flutterEngine)
+        registerConnectivity(flutterEngine)
+    }
+
+    // Reports whether the active network is unmetered (Wi-Fi / Ethernet), for the
+    // "Wi-Fi only" online-lyrics gate. Uses ConnectivityManager directly so we
+    // don't take a third-party connectivity dependency.
+    private fun registerConnectivity(flutterEngine: FlutterEngine) {
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CONNECTIVITY_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                if (call.method == "isUnmetered") {
+                    result.success(isUnmetered())
+                } else {
+                    result.notImplemented()
+                }
+            }
+    }
+
+    private fun isUnmetered(): Boolean {
+        return try {
+            val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            val caps = cm.getNetworkCapabilities(cm.activeNetwork) ?: return false
+            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED) ||
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
+        } catch (_: Exception) {
+            true // fail-open (tiny payloads)
+        }
     }
 
     // Bridge MediaStore audio changes to Dart. on_audio_query is pull-only — it
@@ -204,6 +234,7 @@ class MainActivity : AudioServiceActivity() {
     companion object {
         private const val MEDIA_OBSERVER_CHANNEL = "com.copra.viby/media_observer"
         private const val LYRICS_SAF_CHANNEL = "com.copra.viby/lyrics_saf"
+        private const val CONNECTIVITY_CHANNEL = "com.copra.viby/connectivity"
         private const val REQ_PICK_LYRICS_FOLDER = 0x4C7C // "LRC" pick request
     }
 }

@@ -78,6 +78,7 @@ class SettingsScreen extends ConsumerWidget {
             trailing: const Icon(Icons.chevron_right),
             onTap: () => context.push(AppRoutes.eq),
           ),
+          const _OnlineLyricsTiles(),
           const _LyricsFolderTile(),
           const Divider(),
           const _SectionHeader('Appearance'),
@@ -263,6 +264,42 @@ class _AboutSectionState extends State<_AboutSection> {
                 ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
           ),
         ),
+      ],
+    );
+  }
+}
+
+/// The online-lyrics toggles (LRCLIB). "Fetch lyrics online" is disclosed —
+/// its subtitle states that title & artist are sent to LRCLIB.
+class _OnlineLyricsTiles extends ConsumerWidget {
+  const _OnlineLyricsTiles();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final OnlineLyricsState settings = ref.watch(onlineLyricsSettingsProvider);
+    return Column(
+      children: <Widget>[
+        SwitchListTile(
+          secondary: const Icon(Icons.cloud_download_outlined),
+          title: const Text('Fetch lyrics online'),
+          subtitle: const Text('Sends song title & artist to LRCLIB'),
+          value: settings.enabled,
+          onChanged: (bool on) {
+            ref.read(hapticsServiceProvider).selection();
+            ref.read(onlineLyricsSettingsProvider.notifier).setEnabled(on);
+          },
+        ),
+        if (settings.enabled)
+          SwitchListTile(
+            secondary: const Icon(Icons.wifi),
+            title: const Text('Wi-Fi only'),
+            subtitle: const Text('Don’t fetch lyrics on mobile data'),
+            value: settings.wifiOnly,
+            onChanged: (bool on) {
+              ref.read(hapticsServiceProvider).selection();
+              ref.read(onlineLyricsSettingsProvider.notifier).setWifiOnly(on);
+            },
+          ),
       ],
     );
   }

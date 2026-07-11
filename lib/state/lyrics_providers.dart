@@ -7,7 +7,9 @@ import '../data/lyrics/lyrics.dart';
 import '../data/lyrics/lyrics_repository.dart';
 import '../data/lyrics/lyrics_saf_channel.dart';
 import '../data/lyrics/lyrics_sync.dart';
+import '../data/lyrics/network_probe.dart';
 import '../data/lyrics/sources/embedded_lyrics_source.dart';
+import '../data/lyrics/sources/lrclib_source.dart';
 import '../data/lyrics/sources/saf_sidecar_source.dart';
 import '../data/lyrics/sources/sidecar_lyrics_source.dart';
 import '../data/models/track.dart';
@@ -50,19 +52,21 @@ class LyricsFolder extends _$LyricsFolder {
     final String? uri = await ref.read(lyricsSafBridgeProvider).pickFolder();
     if (uri == null || uri.isEmpty) return false;
     await ref.read(vibyDatabaseProvider).preferencesDao.set(_key, uri);
-    state = uri;
-    // Re-resolve everything now that sidecars are reachable.
+    // Clear the cache *before* flipping state so the chain that re-resolves
+    // (sidecarLyricsSource → lyricsRepository → currentLyrics all watch this
+    // provider) sees an empty cache and a now-reachable sidecar. Changing state
+    // is what drives that re-resolution — invalidating currentLyrics here would
+    // be a cycle (it transitively depends on this provider) and is redundant.
     await ref.read(vibyDatabaseProvider).lyricsDao.clearAll();
-    ref.invalidate(currentLyricsProvider);
+    state = uri;
     return true;
   }
 
   /// Forgets the granted folder (embedded lyrics still resolve).
   Future<void> forgetFolder() async {
     await ref.read(vibyDatabaseProvider).preferencesDao.remove(_key);
-    state = null;
     await ref.read(vibyDatabaseProvider).lyricsDao.clearAll();
-    ref.invalidate(currentLyricsProvider);
+    state = null; // rebuilds the resolution chain (see grantFolder)
   }
 }
 
@@ -79,15 +83,107 @@ SidecarLyricsSource sidecarLyricsSource(Ref ref) {
   );
 }
 
-/// The app-wide lyrics repository: sidecar first, then embedded (synced →
-/// unsynced), all flowing through one [Lyrics] representation.
+/// Immutable online-lyrics settings.
+class OnlineLyricsState {
+  const OnlineLyricsState({required this.enabled, required this.wifiOnly});
+
+  final bool enabled;
+  final bool wifiOnly;
+
+  OnlineLyricsState copyWith({bool? enabled, bool? wifiOnly}) =>
+      OnlineLyricsState(
+        enabled: enabled ?? this.enabled,
+        wifiOnly: wifiOnly ?? this.wifiOnly,
+      );
+
+  @override
+  bool operator ==(Object other) =>
+      other is OnlineLyricsState &&
+      other.enabled == enabled &&
+      other.wifiOnly == wifiOnly;
+
+  @override
+  int get hashCode => Object.hash(enabled, wifiOnly);
+}
+
+/// Persisted online-lyrics settings.
+///
+/// [OnlineLyricsState.enabled] defaults **on** (disclosed in Settings — it sends
+/// title/artist to LRCLIB); [OnlineLyricsState.wifiOnly] defaults off (payloads
+/// are tiny). Enabling clears the negative cache so previously-missed tracks get
+/// a shot online; changing state rebuilds [lyricsRepositoryProvider] (which
+/// watches this), which re-resolves — so we never invalidate `currentLyrics`
+/// here (that would be a dependency cycle).
+@Riverpod(keepAlive: true)
+class OnlineLyricsSettings extends _$OnlineLyricsSettings {
+  static const String _enabledKey = 'lyrics_online_enabled';
+  static const String _wifiOnlyKey = 'lyrics_online_wifi_only';
+
+  @override
+  OnlineLyricsState build() {
+    unawaited(_hydrate());
+    return const OnlineLyricsState(enabled: true, wifiOnly: false);
+  }
+
+  Future<void> _hydrate() async {
+    final dao = ref.read(vibyDatabaseProvider).preferencesDao;
+    final String? enabled = await dao.get(_enabledKey);
+    final String? wifiOnly = await dao.get(_wifiOnlyKey);
+    state = OnlineLyricsState(
+      enabled: enabled == null ? state.enabled : enabled == '1',
+      wifiOnly: wifiOnly == '1',
+    );
+  }
+
+  Future<void> setEnabled(bool on) async {
+    final dao = ref.read(vibyDatabaseProvider).preferencesDao;
+    await dao.set(_enabledKey, on ? '1' : '0');
+    if (on) {
+      // A previously-missed track may now be fetchable — clear negatives first
+      // so the chain (which rebuilds on the state change) re-resolves them.
+      await ref.read(vibyDatabaseProvider).lyricsDao.clearNegativeCache();
+    }
+    state = state.copyWith(enabled: on);
+  }
+
+  Future<void> setWifiOnly(bool on) async {
+    await ref
+        .read(vibyDatabaseProvider)
+        .preferencesDao
+        .set(_wifiOnlyKey, on ? '1' : '0');
+    state = state.copyWith(wifiOnly: on);
+  }
+}
+
+/// The network probe for the Wi-Fi-only gate. Overridable in tests.
+@Riverpod(keepAlive: true)
+NetworkProbe networkProbe(Ref ref) => const PlatformNetworkProbe();
+
+/// The LRCLIB HTTP client. Overridable in tests.
+@Riverpod(keepAlive: true)
+LrclibApi lrclibApi(Ref ref) => DioLrclibApi();
+
+/// The online (LRCLIB) source, gated by the current Wi-Fi-only setting.
+@Riverpod(keepAlive: true)
+LrclibSource onlineLyricsSource(Ref ref) => LrclibSource(
+      api: ref.watch(lrclibApiProvider),
+      networkProbe: ref.watch(networkProbeProvider),
+      wifiOnly: ref.watch(
+          onlineLyricsSettingsProvider.select((OnlineLyricsState s) => s.wifiOnly)),
+    );
+
+/// The app-wide lyrics repository: sidecar → embedded (synced → unsynced) →
+/// online (when enabled), all flowing through one [Lyrics] representation.
 @Riverpod(keepAlive: true)
 LyricsRepository lyricsRepository(Ref ref) {
+  final bool online = ref.watch(
+      onlineLyricsSettingsProvider.select((OnlineLyricsState s) => s.enabled));
   return LyricsRepository(
     dao: ref.watch(vibyDatabaseProvider).lyricsDao,
     sources: <LyricsSourceResolver>[
       ref.watch(sidecarLyricsSourceProvider),
       EmbeddedLyricsSource(),
+      if (online) ref.watch(onlineLyricsSourceProvider),
     ],
   );
 }
