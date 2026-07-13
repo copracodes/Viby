@@ -611,6 +611,68 @@ with a proxy/airplane-mode toggle-off pass that no request leaves the device onc
 the setting is disabled.
 
 376 tests green; analyze clean; debug APK builds (native connectivity channel
-compiles). **Device pass pending** (user: 10 songs with no local lyrics → hit
-rate; airplane-mode silent degrade; mismatch → manual search rescue; toggle-off
-network audit). Subsonic remains Phase 4+.
+compiles). **Device pass complete** (songs with no local lyrics fetch from
+LRCLIB; airplane mode degrades silently; a mismatch is rescued by manual search;
+with the toggle off no request leaves the device). Subsonic remains Phase 4+.
+
+**Step 4.3 — delete from device.** Permanent file deletion, sitting deliberately
+next to (and clearly apart from) Hide: Hide is reversible and keeps the file;
+Delete is final. The wording, the colour and the confirmation flow all exist to
+keep those two from being confused.
+- **The platform flow is the whole design** (`sources/local/media_delete_channel.
+  dart` + a fourth MethodChannel, `com.copra.viby/media_delete`). On **API 30+**
+  an app may not delete another app's media: the only correct path is
+  `MediaStore.createDeleteRequest` → `PendingIntent` →
+  `startIntentSenderForResult`, where the **system** shows "Allow Viby to delete
+  this file?" and performs the delete. So the app adds **no dialog of its own**
+  there (two dialogs in a row feel broken); result: granted → clean up, denied →
+  silent no-op. On **API ≤29** (minSdk 24) the system asks nothing, so the app
+  deletes the row + file itself (`WRITE_EXTERNAL_STORAGE`, `maxSdkVersion=29`)
+  behind *its own* destructive dialog, which names the track and points at Hide
+  ("Tip: Hide removes it from your library without deleting the file"). One
+  `createDeleteRequest` covers a whole batch — one system dialog for an album.
+  Capability-flag pattern (rule 6): `PlatformMediaDeleter` / `NoopMediaDeleter`
+  behind `MediaDeleter`, so the UI checks `capable` and never branches on
+  `Platform`.
+- **`LibraryMaintenance.purgeTracks(ids)` is the ONE place tracks leave the
+  library** (`sources/local/library_maintenance.dart`). The user deleting a file
+  and the incremental scanner finding a file gone are the same cleanup, so they
+  share it — which also makes them safe to *race* (deleting a file wakes the
+  MediaStore observer, whose rescan diff names the same ids; purging ids that are
+  already gone is a no-op). FKs cascade history/cache/lyrics; the purge covers
+  what they don't: playlist entries (plain key → dropped + positions
+  re-compacted), album track counts (recomputed; emptied albums deleted),
+  artists with no tracks *and* no albums, and artwork files + cached palette
+  seeds no surviving row still points at. Liked/visibility are columns and die
+  with the row. DB work is one transaction; art files are deleted after it
+  commits, and a stuck file never fails the purge.
+- **Nothing in the DB changes until the files are confirmed gone**
+  (`state/delete_actions.dart`): denied → no-op, failed (read-only card, locked
+  file) → honest snackbar and the library is untouched, so a song is never shown
+  as deleted while the file is still there. On success the tracks leave the queue
+  (`removeTrackById` → a playing copy advances; **removing the only item now
+  calls `clearQueue`**, so playback stops and the notification is torn down
+  instead of leaving a stale one).
+- **Source guard** (pure `sources/local/delete_targets.dart`): only `local`
+  tracks whose id maps back to a real MediaStore row are deletable —
+  `subsonic:` pointers and `local:synthetic:` seed rows can never reach the
+  platform call. The `source` enum earns its keep.
+- **Entry points, and only these:** the track long-press sheet (a visually
+  separated, error-coloured "Delete from device / Removes the file permanently"
+  row below Hide) and the album-detail **overflow** ("Delete album from device").
+  Never in the Now Playing transport or anywhere a mis-tap is cheap. Success
+  says "Deleted 'Title'" with **no undo** — the file is gone and a fake undo
+  would be a lie. That is what Hide is for. (Multi-select is not wired: there is
+  no existing multi-select pattern to hang it on, so batch = album-level.)
+
+403 tests green (added: the purge cascade matrix — playlist re-compaction, empty
+album/artist cleanup, artwork + palette orphan eviction, art-still-in-use kept,
+hidden rows purgeable, a failed eviction not failing the purge; idempotency incl.
+two concurrent purges of the same id; queue removal incl. the only-item stop;
+the source guard; channel outcome mapping + one-request batching; the sheet's
+destructive affordance). Analyze clean; debug APK builds (the delete channel
+compiles). **Device pass pending** (user, on sacrificial copies: single delete →
+system dialog, file verifiably gone in Files, vanishes from library/queue/playlist
+instantly; delete the playing track → advances cleanly; batch-delete an album;
+**deny** the system dialog → nothing changes; delete an album's last track →
+album disappears with no orphan art).
