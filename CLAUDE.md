@@ -665,14 +665,32 @@ keep those two from being confused.
   would be a lie. That is what Hide is for. (Multi-select is not wired: there is
   no existing multi-select pattern to hang it on, so batch = album-level.)
 
+**Step 4.3a — ghost albums/artists (fixed after the device pass).** Junk-filtered
+recordings are *hidden, not dropped* (3.3), so the album/artist rows the scanner
+wrote for them outlived their tracks and surfaced as empty cards ("Alarms",
+"Call", an "Unknown artist" full of nothing). Browsing now filters them the way it
+filters tracks: **an album is in the library iff a visible track points at it; an
+artist iff they have a visible track** — a correlated `EXISTS` (short-circuits on
+the first hit, rides `idx_tracks_album` / `idx_tracks_artist`) on the albums grid,
+`watchAllAlbums`, the artists list and artist-detail's album list.
+`watchArtist(id)` stays **unfiltered** on purpose: it resolves a name for a row
+already on screen (the Hidden-songs screen depends on it) — which is precisely why
+the ghost rows must keep existing. Counts are visible-only too, so an album card's
+number matches the list you get when you open it: hide/unhide recomputes the
+album inside the DAO transaction, and every scan ends with a whole-library
+recount (`recomputeAllAlbumTrackCounts`), self-healing albums an incremental scan
+never touched. Measured at 10k: albums grid 58ms, artists 6ms, full recount 34ms.
+**Device pass complete.**
+
 403 tests green (added: the purge cascade matrix — playlist re-compaction, empty
 album/artist cleanup, artwork + palette orphan eviction, art-still-in-use kept,
 hidden rows purgeable, a failed eviction not failing the purge; idempotency incl.
 two concurrent purges of the same id; queue removal incl. the only-item stop;
 the source guard; channel outcome mapping + one-request batching; the sheet's
-destructive affordance). Analyze clean; debug APK builds (the delete channel
-compiles). **Device pass pending** (user, on sacrificial copies: single delete →
-system dialog, file verifiably gone in Files, vanishes from library/queue/playlist
-instantly; delete the playing track → advances cleanly; batch-delete an album;
-**deny** the system dialog → nothing changes; delete an album's last track →
-album disappears with no orphan art).
+destructive affordance) — **410 with 4.3a** (ghost-album/artist exclusion, count
+correctness, the live hide→vanish/unhide→return round-trip through the real watch
+stream, Hidden-songs screen unaffected). Analyze clean; debug APK builds (the
+delete channel compiles). **Device pass complete** (S22, Android 16): single
+delete → system dialog, file gone, vanishes from library/queue/playlist instantly;
+the playing track advances cleanly; album batch-delete; denying the dialog changes
+nothing; an album's last track takes the album with it, no orphan art.
