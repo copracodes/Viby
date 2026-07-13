@@ -96,6 +96,11 @@ flutter:
     # Placeholder cover art shown in the media notification / lock screen until
     # real per-track artwork lands with the library phase.
     - assets/placeholder_art.png
+    # The brand mark for in-app use (ui/widgets/viby_mark.dart) — a white
+    # silhouette on transparency, tinted at the call site. Generated from the
+    # same master as the launcher icon by tools/gen_icons.py; the 2.0x/3.0x
+    # variants beside it are picked up automatically.
+    - assets/brand/viby_mark.png
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

@@ -1,10 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- Cold-start splash via the Android 12+ SplashScreen API (backported to
-         older releases by androidx core-splashscreen). Brand mark on a flat
-         near-black background — identical in light and dark, so there is never a
-         white flash. `postSplashScreenTheme` hands off to NormalTheme once the
-         Flutter engine is ready, avoiding a second (Flutter) splash. -->
+         older releases by androidx core-splashscreen). The brand mark on the
+         tile's charcoal — identical in light and dark, so there is never a white
+         flash. `postSplashScreenTheme` hands off to NormalTheme once the Flutter
+         engine is ready, avoiding a second (Flutter) splash.
+
+         The splash reuses the adaptive foreground on purpose: with no icon
+         background the splash mark must fit inside a 192dp circle on a 288dp
+         canvas (the inner 2/3), and the foreground already keeps the glyph at
+         ~47% of its viewport — well clear of that mask, just as it clears the
+         launcher's. One drawable, one safe zone, nothing to keep in sync. -->
     <style name="LaunchTheme" parent="Theme.SplashScreen">
         <item name="windowSplashScreenBackground">@color/splash_background</item>
         <item name="windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
