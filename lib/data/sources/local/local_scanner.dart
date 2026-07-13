@@ -206,7 +206,6 @@ class LocalScanner {
     }
 
     // 3. WRITE (artists + albums first, then tracks in chunks)
-    final Set<String> affectedAlbumIds = <String>{};
     final Map<String, int> albumMediaIds = <String, int>{};
     final Map<String, ArtistsCompanion> artists = <String, ArtistsCompanion>{};
     final Map<String, AlbumsCompanion> albums = <String, AlbumsCompanion>{};
@@ -214,7 +213,6 @@ class LocalScanner {
       artists[artistIdForSong(s)] = songToArtistCompanion(s);
       final String albumId = albumIdForSong(s);
       albums[albumId] = songToAlbumCompanion(s);
-      affectedAlbumIds.add(albumId);
       if (s.albumId != null) albumMediaIds[albumId] = s.albumId!;
     }
     await _libraryDao.upsertArtists(artists.values.toList());
@@ -257,7 +255,10 @@ class LocalScanner {
     }
 
     if (toDelete.isNotEmpty) await _maintenance.purgeTracks(toDelete);
-    await _libraryDao.recomputeAlbumTrackCounts(affectedAlbumIds);
+    // Every album, not just the ones this scan touched: counts are visible-only,
+    // and an incremental scan that skipped an album must still not leave a stale
+    // number on it (nor on a library written before counts became filtered).
+    await _libraryDao.recomputeAllAlbumTrackCounts();
 
     // 4. ARTWORK (after the library is browsable)
     int artworkErrors = 0;

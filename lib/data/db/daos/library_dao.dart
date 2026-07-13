@@ -61,10 +61,39 @@ class LibraryDao extends DatabaseAccessor<VibyDatabase>
     with _$LibraryDaoMixin {
   LibraryDao(super.db);
 
+  // --- Visibility predicates ----------------------------------------------
+
+  /// Whether an album still has at least one *visible* track.
+  ///
+  /// Hiding a track (junk filter or "Hide song") doesn't delete its album/artist
+  /// rows — the scanner wrote them, and they must survive so the Hidden-songs
+  /// screen can still resolve names. Without this predicate those rows show up in
+  /// the library as empty ghost cards ("Alarms", "Call", an "Unknown artist" full
+  /// of nothing). So browsing filters albums/artists the same way it filters
+  /// tracks: an album exists in the library iff a visible track points at it.
+  ///
+  /// A correlated EXISTS rather than a join+group: it short-circuits on the first
+  /// hit and rides the `idx_tracks_album` / `idx_tracks_artist` indexes, so it
+  /// stays flat at 10k tracks (see `test/perf/scale_perf_test.dart`).
+  Expression<bool> _albumHasVisibleTrack() => existsQuery(
+        selectOnly(tracks)
+          ..addColumns(<Expression<Object>>[tracks.id])
+          ..where(tracks.albumId.equalsExp(albums.id) & _visible(tracks)),
+      );
+
+  /// Whether an artist still has at least one visible track (and so at least one
+  /// non-ghost album).
+  Expression<bool> _artistHasVisibleTrack() => existsQuery(
+        selectOnly(tracks)
+          ..addColumns(<Expression<Object>>[tracks.id])
+          ..where(tracks.artistId.equalsExp(artists.id) & _visible(tracks)),
+      );
+
   // --- Albums -------------------------------------------------------------
 
   Stream<List<AlbumRow>> watchAllAlbums() {
     return (select(albums)
+          ..where((_) => _albumHasVisibleTrack())
           ..orderBy(<OrderClauseGenerator<$AlbumsTable>>[
             (t) => OrderingTerm(expression: t.name.lower()),
           ]))
@@ -72,11 +101,13 @@ class LibraryDao extends DatabaseAccessor<VibyDatabase>
   }
 
   /// Every album with its artist name resolved (name order) — the albums grid.
+  /// Ghost albums (all their tracks hidden) are excluded.
   Stream<List<AlbumWithArtist>> watchAlbumsWithArtist() {
     final JoinedSelectStatement<HasResultSet, dynamic> statement =
         select(albums).join(<Join<HasResultSet, dynamic>>[
           leftOuterJoin(artists, artists.id.equalsExp(albums.artistId)),
         ])
+          ..where(_albumHasVisibleTrack())
           ..orderBy(<OrderingTerm>[
             OrderingTerm(expression: albums.name.lower()),
           ]);
@@ -121,8 +152,10 @@ class LibraryDao extends DatabaseAccessor<VibyDatabase>
 
   // --- Artists ------------------------------------------------------------
 
+  /// Every artist with at least one visible track (name order) — the Artists tab.
   Stream<List<ArtistRow>> watchAllArtists() {
     return (select(artists)
+          ..where((_) => _artistHasVisibleTrack())
           ..orderBy(<OrderClauseGenerator<$ArtistsTable>>[
             (t) => OrderingTerm(expression: t.name.lower()),
           ]))
@@ -130,18 +163,21 @@ class LibraryDao extends DatabaseAccessor<VibyDatabase>
   }
 
   /// A single artist row (for the album-detail header). Null while unknown.
+  /// Deliberately UNfiltered — it resolves a name for a row we're already
+  /// showing (including on the Hidden-songs screen), it doesn't list anything.
   Stream<ArtistRow?> watchArtist(String artistId) {
     return (select(artists)..where((t) => t.id.equals(artistId)))
         .watchSingleOrNull();
   }
 
-  /// Artist + their albums (by name). Null while the artist id is unknown.
+  /// Artist + their albums (by name), ghost albums excluded. Null while the
+  /// artist id is unknown.
   Stream<ArtistWithAlbums?> watchArtistWithAlbums(String artistId) {
     final Stream<ArtistRow?> artistStream =
         (select(artists)..where((t) => t.id.equals(artistId)))
             .watchSingleOrNull();
     final Stream<List<AlbumRow>> albumsStream = (select(albums)
-          ..where((t) => t.artistId.equals(artistId))
+          ..where((t) => t.artistId.equals(artistId) & _albumHasVisibleTrack())
           ..orderBy(<OrderClauseGenerator<$AlbumsTable>>[
             (t) => OrderingTerm(expression: t.name.lower()),
           ]))
@@ -489,27 +525,48 @@ class LibraryDao extends DatabaseAccessor<VibyDatabase>
   /// Sets a track's [Tracks.visibility]. When [userOverride] is passed it's
   /// written too — unhiding sets it true so a future scan never re-filters the
   /// track (see [Tracks.userOverride]).
+  ///
+  /// The album's `trackCount` is recomputed in the same transaction: counts are
+  /// visible-only, so hiding a song must decrement its album (and hiding the last
+  /// one takes the album to 0, at which point browsing drops it entirely).
   Future<void> setTrackVisibility(
     String id,
     TrackVisibility visibility, {
     bool? userOverride,
   }) async {
-    await (update(tracks)..where((t) => t.id.equals(id))).write(TracksCompanion(
-      visibility: Value(visibility),
-      userOverride:
-          userOverride == null ? const Value.absent() : Value(userOverride),
-    ));
+    await transaction(() async {
+      final TrackRow? row =
+          await (select(tracks)..where((t) => t.id.equals(id)))
+              .getSingleOrNull();
+      if (row == null) return;
+      await (update(tracks)..where((t) => t.id.equals(id)))
+          .write(TracksCompanion(
+        visibility: Value(visibility),
+        userOverride:
+            userOverride == null ? const Value.absent() : Value(userOverride),
+      ));
+      await recomputeAlbumTrackCounts(<String>{row.albumId});
+    });
   }
 
   /// Unhides every track in a hidden bucket ([TrackVisibility.hiddenByUser] or
   /// [TrackVisibility.hiddenByFilter]) → visible + userOverride. "Unhide all".
   Future<void> unhideAll(TrackVisibility from) async {
-    await (update(tracks)..where((t) => t.visibility.equalsValue(from))).write(
-      const TracksCompanion(
-        visibility: Value(TrackVisibility.visible),
-        userOverride: Value(true),
-      ),
-    );
+    await transaction(() async {
+      final List<TrackRow> rows =
+          await (select(tracks)..where((t) => t.visibility.equalsValue(from)))
+              .get();
+      if (rows.isEmpty) return;
+      await (update(tracks)..where((t) => t.visibility.equalsValue(from))).write(
+        const TracksCompanion(
+          visibility: Value(TrackVisibility.visible),
+          userOverride: Value(true),
+        ),
+      );
+      await recomputeAlbumTrackCounts(
+        rows.map((TrackRow r) => r.albumId).toSet(),
+      );
+    });
   }
 
   /// Likes/unlikes a track, stamping [Tracks.likedAt] with [at] (now) on like
@@ -655,12 +712,16 @@ class LibraryDao extends DatabaseAccessor<VibyDatabase>
   }
 
   /// Recomputes `trackCount` for the given albums from the current tracks.
+  ///
+  /// Counts **visible** tracks only, so the number on an album card matches the
+  /// list you get when you open it (and an album whose tracks are all hidden
+  /// reads 0 — it's a ghost, and browsing filters it out entirely).
   Future<void> recomputeAlbumTrackCounts(Set<String> albumIds) async {
     if (albumIds.isEmpty) return;
     final Expression<int> count = tracks.id.count();
     final List<TypedResult> rows = await (selectOnly(tracks)
           ..addColumns(<Expression<Object>>[tracks.albumId, count])
-          ..where(tracks.albumId.isIn(albumIds.toList()))
+          ..where(tracks.albumId.isIn(albumIds.toList()) & _visible(tracks))
           ..groupBy(<Expression<Object>>[tracks.albumId]))
         .get();
     final Map<String, int> counts = <String, int>{
@@ -672,6 +733,37 @@ class LibraryDao extends DatabaseAccessor<VibyDatabase>
           albums,
           AlbumsCompanion(trackCount: Value(counts[albumId] ?? 0)),
           where: ($AlbumsTable a) => a.id.equals(albumId),
+        );
+      }
+    });
+  }
+
+  /// Recomputes `trackCount` for **every** album (visible tracks only).
+  ///
+  /// The scanner runs this at the end of a scan so counts self-heal: an
+  /// incremental scan only touches the albums it wrote, and a library written
+  /// before counts became visibility-aware would otherwise keep stale numbers on
+  /// albums nothing happened to touch. One grouped read + one batch write.
+  Future<void> recomputeAllAlbumTrackCounts() async {
+    final Expression<int> count = tracks.id.count();
+    final List<TypedResult> rows = await (selectOnly(tracks)
+          ..addColumns(<Expression<Object>>[tracks.albumId, count])
+          ..where(_visible(tracks))
+          ..groupBy(<Expression<Object>>[tracks.albumId]))
+        .get();
+    final Map<String, int> counts = <String, int>{
+      for (final TypedResult r in rows)
+        r.read(tracks.albumId)!: r.read(count) ?? 0,
+    };
+    final List<AlbumRow> all = await select(albums).get();
+    await batch((Batch b) {
+      for (final AlbumRow album in all) {
+        final int fresh = counts[album.id] ?? 0;
+        if (fresh == album.trackCount) continue;
+        b.update(
+          albums,
+          AlbumsCompanion(trackCount: Value(fresh)),
+          where: ($AlbumsTable a) => a.id.equals(album.id),
         );
       }
     });

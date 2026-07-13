@@ -48,6 +48,25 @@ void main() {
     diffSw.stop();
     expect(diff.isEmpty, isTrue);
 
+    // --- Albums grid + Artists list (the ghost-filter EXISTS subqueries) --
+    // Both reads now carry a correlated "has a visible track" EXISTS. It rides
+    // idx_tracks_album / idx_tracks_artist and short-circuits on the first hit,
+    // so it must not turn the grid into a table scan at 10k.
+    final Stopwatch gridSw = Stopwatch()..start();
+    final List<AlbumWithArtist> grid = await dao.watchAlbumsWithArtist().first;
+    gridSw.stop();
+    expect(grid, hasLength(800));
+
+    final Stopwatch artistsSw = Stopwatch()..start();
+    final List<ArtistRow> artistRows = await dao.watchAllArtists().first;
+    artistsSw.stop();
+    expect(artistRows, hasLength(400));
+
+    // Whole-library count recompute (runs once at the end of every scan).
+    final Stopwatch countsSw = Stopwatch()..start();
+    await dao.recomputeAllAlbumTrackCounts();
+    countsSw.stop();
+
     // --- Cold-start restore path (fetch a large saved queue) ------------
     // The DB fetch is the restore path's dominant cost; artwork resolution is
     // deduped-per-album and trivial (see track_resolver), so measuring
@@ -63,11 +82,18 @@ void main() {
     print('[scale] seed=${seedSw.elapsedMilliseconds}ms '
         'search=${searchSw.elapsedMilliseconds}ms '
         'diff=${diffSw.elapsedMilliseconds}ms '
+        'albums(800)=${gridSw.elapsedMilliseconds}ms '
+        'artists(400)=${artistsSw.elapsedMilliseconds}ms '
+        'recountAll=${countsSw.elapsedMilliseconds}ms '
         'restore(500 ids)=${restoreSw.elapsedMilliseconds}ms');
 
     // Generous ceilings (target budgets are much tighter — see printout).
     expect(searchSw.elapsedMilliseconds, lessThan(1000));
     expect(diffSw.elapsedMilliseconds, lessThan(2000));
     expect(restoreSw.elapsedMilliseconds, lessThan(2000));
+    // The browse reads back the Library tabs — they must feel instant.
+    expect(gridSw.elapsedMilliseconds, lessThan(300));
+    expect(artistsSw.elapsedMilliseconds, lessThan(300));
+    expect(countsSw.elapsedMilliseconds, lessThan(1000));
   }, timeout: const Timeout(Duration(minutes: 2)));
 }
