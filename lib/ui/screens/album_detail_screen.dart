@@ -4,11 +4,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/display_names.dart';
 import '../../data/db/daos/library_dao.dart';
 import '../../data/db/viby_database.dart';
+import '../../data/sources/local/delete_targets.dart';
 import '../../state/library_actions.dart';
 import '../../state/library_providers.dart';
 import '../theme/tokens.dart';
 import '../widgets/add_to_playlist.dart';
 import '../widgets/album_art.dart';
+import '../widgets/delete_from_device.dart';
 import '../widgets/track_tile.dart';
 
 /// Album detail: a collapsing header (large art + title that fold into a compact
@@ -84,15 +86,9 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
                 ),
                 actions: <Widget>[
                   if (metas.isNotEmpty)
-                    IconButton(
-                      icon: const Icon(Icons.playlist_add),
-                      tooltip: 'Add to playlist',
-                      onPressed: () => showAddTracksToPlaylist(
-                        context,
-                        ref,
-                        metas.map((TrackWithMeta m) => m.track.id).toList(),
-                        label: album.name.albumOrUnknown,
-                      ),
+                    _AlbumOverflow(
+                      album: album,
+                      metas: metas,
                     ),
                 ],
                 flexibleSpace: FlexibleSpaceBar(
@@ -126,6 +122,70 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
           );
         },
       ),
+    );
+  }
+}
+
+/// Album-level actions. "Delete album from device" lives here — behind an
+/// overflow, in the error colour, never one tap away — and covers the whole album
+/// in a single platform delete request (one system dialog for the batch).
+class _AlbumOverflow extends ConsumerWidget {
+  const _AlbumOverflow({required this.album, required this.metas});
+
+  final AlbumRow album;
+  final List<TrackWithMeta> metas;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final ThemeData theme = Theme.of(context);
+    final List<TrackRow> rows =
+        metas.map((TrackWithMeta m) => m.track).toList();
+    final DeleteTargets targets = resolveDeleteTargets(rows);
+    final bool canDelete =
+        ref.watch(mediaDeleterProvider).capable && !targets.isEmpty;
+
+    return PopupMenuButton<String>(
+      onSelected: (String value) {
+        switch (value) {
+          case 'playlist':
+            showAddTracksToPlaylist(
+              context,
+              ref,
+              rows.map((TrackRow t) => t.id).toList(),
+              label: album.name.albumOrUnknown,
+            );
+          case 'delete':
+            showDeleteFromDevice(context, ref, rows);
+        }
+      },
+      itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
+        const PopupMenuItem<String>(
+          value: 'playlist',
+          child: ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(Icons.playlist_add),
+            title: Text('Add to playlist'),
+          ),
+        ),
+        if (canDelete) ...<PopupMenuEntry<String>>[
+          const PopupMenuDivider(),
+          PopupMenuItem<String>(
+            value: 'delete',
+            child: ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(Icons.delete_outline, color: theme.colorScheme.error),
+              title: Text(
+                'Delete album from device',
+                style: TextStyle(color: theme.colorScheme.error),
+              ),
+              subtitle: Text(
+                'Removes ${targets.length} '
+                '${targets.length == 1 ? 'file' : 'files'} permanently',
+              ),
+            ),
+          ),
+        ],
+      ],
     );
   }
 }
