@@ -694,3 +694,92 @@ delete channel compiles). **Device pass complete** (S22, Android 16): single
 delete → system dialog, file gone, vanishes from library/queue/playlist instantly;
 the playing track advances cleanly; album batch-delete; denying the dialog changes
 nothing; an album's last track takes the album with it, no orphan art.
+
+**Step 4.4 — the brand mark.** The new app icon, deconstructed from the master
+tile (`assets-design/adio_logo1.jpg` — a *presentation mockup*: the mark on a
+charcoal tile, on a light page, with a drop shadow; never shipped whole).
+`tools/gen_icons.py` regenerates every piece and is the source of truth:
+- **The glyph is a traced vector, not an upscaled raster.** The source mark is
+  ~250px, so a PNG-per-density foreground would be visibly soft at xxxhdpi.
+  Pipeline: isolate the tile → sample its true charcoal (**#2B2B2B**) → isolate
+  the glyph → supersample the *grayscale* (so the traced boundary lands on the
+  antialiased edge, not a threshold staircase) → contour-trace → RDP simplify
+  (keeps nodes where curvature demands them — the tapered tips — and drops them
+  along lazy arcs) → Catmull-Rom cubics. Fidelity is **measured**: `--check`
+  prints the IoU against the source mask (**0.9844**; the residual is the
+  antialiased edge). The vector also buys the Android 13+ **monochrome/themed**
+  layer and the notification silhouette for free.
+- **The 66dp safe zone is a LIMIT, not a target.** Sized to 66 the glyph fills
+  92% of the 72dp visible area — far heavier than the master, where the mark is
+  70.6% of the tile. It's scaled to that same share of the *visible* area
+  (~51dp): matches the brand's optical weight and clears circle / squircle /
+  rounded-square masks with margin. The **splash reuses the adaptive foreground**
+  (at 47% of its viewport it also clears the splash's inner-⅔ circle) — one
+  drawable, one safe zone, nothing to keep in sync.
+- **Corner radius is measured off the tile's top row (0.187).** An area-based
+  estimate returns 0.32 because it counts the mockup's drop shadow.
+- `ic_stat_viby` is the same glyph as a flat white silhouette: Android renders
+  small-icons from the **alpha only** and re-tints them, so a filled tile would
+  show as a solid blob. Play Store master (`assets-design/store/`) is a
+  **full-bleed square with no alpha** — Play applies its own corner mask, so a
+  pre-rounded tile would be double-rounded. Splash + adaptive background use the
+  sampled charcoal (identical light/dark → still no white flash on cold start).
+- In-app, `ui/widgets/viby_mark.dart` (tintable silhouette asset) replaces the
+  stock Material icons in the Home welcome state and About. (There was no in-app
+  waveform mark to sweep — the old waveform only ever existed in the launcher
+  XML.) **Device pass complete** (S22): two launcher shapes, themed icon, splash,
+  notification icon.
+
+**Step 4.5 — audiophile finesse.** Individually small, together the "this app
+respects music" layer. All the policy is pure and unit-tested; the handler obeys.
+- **ONE VOLUME AUTHORITY** (`audio/volume_mixer.dart`). Gain (ReplayGain), duck
+  (interruption) and fade (resume / sleep) are three factors multiplied by
+  `mixVolume()` — the only function allowed to compute a volume. Load-bearing:
+  the interruption handler used to call `setVolume(0.3)` / `setVolume(1.0)`
+  directly, which would have discarded a track's normalized level and silently
+  un-normalized it. It's also why the resume fade ramps **to the track's
+  ReplayGain level**, not to full scale. **EQ composes by construction** (the
+  equalizer is in the just_audio `AudioPipeline`; this scales output volume).
+- **Volume normalization (ReplayGain)** — `audio/replay_gain.dart` +
+  **schema v9** (`rgTrackGainDb/rgTrackPeak/rgAlbumGainDb/rgAlbumPeak` +
+  `rgScanned`; migration + test). Tags are read with the project's **own
+  dependency-free `id3_reader`, NOT `audiotags`** (removed for breaking the AGP 8
+  build): `parseReplayGain` reads `TXXX` (what loudgain/foobar2000/mp3gain write —
+  case-insensitive, tolerating `-7.35 dB` / bare numbers / comma decimals) with
+  `RVA2` as fallback. Reading is a **post-scan phase** (`ScanPhase.replayGain`) —
+  it's the only part of scanning that must open *every* file, so it runs after the
+  library is browsable. `rgScanned` keeps "untagged" distinct from "not looked at",
+  so each file is read exactly once (a changed file re-arms it, like the lyrics
+  drop); the scanner's normal upsert omits the columns, so a rescan preserves them.
+  Policy: **untagged files play at 1.0 with no pre-amp** (a fabricated level is
+  worse than none); album mode falls back to track gain; clip protection caps at
+  `1/peak`; the scalar clamps to **[0,1]** because the platform volume is an
+  *attenuator* — normalization pulls loud masters *down* to the reference, which
+  is exactly how a loud/quiet pair evens out. Settings › Playback › Volume
+  normalization (mode / pre-amp −6..+6 dB / prevent clipping).
+- **Sleep timer** (`audio/sleep_timer.dart`) — 15/30/45/60 min, end-of-track,
+  end-of-queue. Lives in the **audio layer**, so it survives a disposed UI and a
+  backgrounded app; `SleepAfter` anchors to an **absolute deadline** (not a
+  decremented counter), so a starved background process still fires on time. The
+  fade-out (last 10s, never a hard stop) is driven from `remaining` every tick, so
+  a seek during end-of-track can't desync it. End-of-queue needs the engine's
+  repeat-aware `hasNext`, which the player can't compute — the queue pushes it
+  down through the sink. Countdown chip in Now Playing (tap → extend / cancel).
+- **Speed** 0.5–2.0x, pitch preserved; chip when ≠ 1x. **Session-only, and that's
+  deliberate**: a persisted 1.5x is a trap you set for an audiobook and rediscover
+  a week later as "music sounds subtly wrong", with no way to connect it to a
+  setting you forgot.
+- **Skip silence** (Android) and **resume fade-in** (300ms, 0→level, kills the
+  headphone blast; a track *start* is never faded — it should begin at its level,
+  not swell into it).
+- Playback settings live in the **v4 preferences KV store** (no migration) and are
+  hydrated **at app start**, not lazily from Settings, so they apply to the first
+  track played.
+
+453 tests green (added: RG scalar math incl. peak/pre-amp/clamp + the untagged
+rule, fade×RG composition, the sleep state machine incl. end-of-track/end-of-queue
+and the absolute-deadline background case, TXXX/RVA2 parsing, the scan phase's
+read-once behaviour, v8→v9 migration). Analyze clean. **Device pass complete**
+(S22): RG evens out a loud/quiet pair, the sleep timer fades and stops while
+backgrounded, the speed chip appears and resets on restart. Subsonic remains
+Phase 4+.
