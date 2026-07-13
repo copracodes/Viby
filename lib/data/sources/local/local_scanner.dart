@@ -9,6 +9,7 @@ import '../../db/tables.dart';
 import '../../db/viby_database.dart';
 import 'artwork_service.dart';
 import 'junk_filter.dart';
+import 'library_maintenance.dart';
 import 'scan_diff.dart';
 import 'song_mapper.dart';
 import 'tag_repair_service.dart';
@@ -53,6 +54,7 @@ class LocalScanner {
     required OnAudioQuery audioQuery,
     required LibraryDao libraryDao,
     required ArtworkService artworkService,
+    required LibraryMaintenance maintenance,
     TagRepairService? tagRepair,
     LyricsDao? lyricsDao,
     this.chunkSize = 500,
@@ -60,12 +62,18 @@ class LocalScanner {
   }) : _audioQuery = audioQuery,
        _libraryDao = libraryDao,
        _artworkService = artworkService,
+       _maintenance = maintenance,
        _tagRepair = tagRepair,
        _lyricsDao = lyricsDao;
 
   final OnAudioQuery _audioQuery;
   final LibraryDao _libraryDao;
   final ArtworkService _artworkService;
+
+  /// The shared purge path. A track that vanished from MediaStore gets exactly
+  /// the same cleanup as one the user deleted from the device (playlist entries,
+  /// empty albums/artists, orphaned artwork) — see [LibraryMaintenance].
+  final LibraryMaintenance _maintenance;
   final TagRepairService? _tagRepair;
 
   /// Optional lyrics cache — when a track's file changed, its cached lyrics are
@@ -248,7 +256,7 @@ class LocalScanner {
       ));
     }
 
-    if (toDelete.isNotEmpty) await _libraryDao.deleteTracks(toDelete);
+    if (toDelete.isNotEmpty) await _maintenance.purgeTracks(toDelete);
     await _libraryDao.recomputeAlbumTrackCounts(affectedAlbumIds);
 
     // 4. ARTWORK (after the library is browsable)

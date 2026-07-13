@@ -39,6 +39,15 @@
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
 
+    <!-- "Delete from device" on Android 10 and below (API <= 29), where the app
+         deletes the MediaStore row + the file itself. From API 30 deletion goes
+         through MediaStore.createDeleteRequest (the system shows its own
+         confirmation and performs the delete), so no write permission is needed
+         — hence maxSdkVersion. -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29" />
+
     <application
         android:label="Viby"
         android:name="${applicationName}"

@@ -11,6 +11,16 @@ String localTrackId(int mediaStoreId) => 'local:$mediaStoreId';
 String localAlbumId(int albumId) => 'local:album:$albumId';
 String localArtistId(int artistId) => 'local:artist:$artistId';
 
+/// The inverse of [localTrackId]: the MediaStore row id behind a `local:<n>`
+/// track id, or null when the id isn't a real MediaStore-backed local track
+/// (a `subsonic:` id, or a `local:synthetic:` seeded row). "Delete from device"
+/// addresses files by this id, so anything that returns null can't be deleted.
+int? mediaStoreIdFromTrackId(String trackId) {
+  const String prefix = 'local:';
+  if (!trackId.startsWith(prefix)) return null;
+  return int.tryParse(trackId.substring(prefix.length));
+}
+
 /// Album id for a song, falling back to a name-derived key when MediaStore has
 /// no numeric album id (kept deterministic so rescans still upsert idempotently).
 String albumIdForSong(SongModel song) {

@@ -400,6 +400,85 @@ class LibraryDao extends DatabaseAccessor<VibyDatabase>
     return (delete(tracks)..where((t) => t.id.isIn(ids))).go();
   }
 
+  // --- Purge support (see LibraryMaintenance) -----------------------------
+
+  /// The raw rows behind [ids], **unfiltered** by visibility — a purge must see
+  /// hidden rows too (you can delete a hidden song). Order is not guaranteed.
+  Future<List<TrackRow>> trackRowsByIds(List<String> ids) async {
+    if (ids.isEmpty) return <TrackRow>[];
+    return (select(tracks)..where((t) => t.id.isIn(ids))).get();
+  }
+
+  /// Of [albumIds], those that no track references any more — the albums a purge
+  /// should delete so an emptied album never lingers in the grid.
+  Future<List<AlbumRow>> emptyAlbums(Set<String> albumIds) async {
+    if (albumIds.isEmpty) return <AlbumRow>[];
+    final List<AlbumRow> candidates =
+        await (select(albums)..where((a) => a.id.isIn(albumIds.toList()))).get();
+    if (candidates.isEmpty) return <AlbumRow>[];
+    final List<TypedResult> live = await (selectOnly(tracks, distinct: true)
+          ..addColumns(<Expression<Object>>[tracks.albumId])
+          ..where(tracks.albumId.isIn(candidates.map((AlbumRow a) => a.id).toList())))
+        .get();
+    final Set<String> stillUsed = <String>{
+      for (final TypedResult r in live) r.read(tracks.albumId)!,
+    };
+    return candidates
+        .where((AlbumRow a) => !stillUsed.contains(a.id))
+        .toList();
+  }
+
+  /// Of [artistIds], those with neither tracks nor albums left.
+  Future<List<String>> emptyArtists(Set<String> artistIds) async {
+    if (artistIds.isEmpty) return <String>[];
+    final List<String> ids = artistIds.toList();
+    final List<TypedResult> liveTracks = await (selectOnly(tracks, distinct: true)
+          ..addColumns(<Expression<Object>>[tracks.artistId])
+          ..where(tracks.artistId.isIn(ids)))
+        .get();
+    final List<TypedResult> liveAlbums = await (selectOnly(albums, distinct: true)
+          ..addColumns(<Expression<Object>>[albums.artistId])
+          ..where(albums.artistId.isIn(ids)))
+        .get();
+    final Set<String> stillUsed = <String>{
+      for (final TypedResult r in liveTracks) r.read(tracks.artistId)!,
+      for (final TypedResult r in liveAlbums) r.read(albums.artistId)!,
+    };
+    return ids.where((String id) => !stillUsed.contains(id)).toList();
+  }
+
+  /// Of [keys], the artwork keys no surviving track or album still points at —
+  /// the art files (and cached palettes) a purge may evict.
+  Future<List<String>> orphanedArtworkKeys(Set<String> keys) async {
+    if (keys.isEmpty) return <String>[];
+    final List<String> ids = keys.toList();
+    final List<TypedResult> byTrack = await (selectOnly(tracks, distinct: true)
+          ..addColumns(<Expression<Object>>[tracks.artworkKey])
+          ..where(tracks.artworkKey.isIn(ids)))
+        .get();
+    final List<TypedResult> byAlbum = await (selectOnly(albums, distinct: true)
+          ..addColumns(<Expression<Object>>[albums.artworkKey])
+          ..where(albums.artworkKey.isIn(ids)))
+        .get();
+    final Set<String> stillUsed = <String>{
+      for (final TypedResult r in byTrack)
+        if (r.read(tracks.artworkKey) != null) r.read(tracks.artworkKey)!,
+      for (final TypedResult r in byAlbum)
+        if (r.read(albums.artworkKey) != null) r.read(albums.artworkKey)!,
+    };
+    return ids.where((String key) => !stillUsed.contains(key)).toList();
+  }
+
+  Future<int> deleteAlbums(List<String> ids) {
+    if (ids.isEmpty) return Future<int>.value(0);
+    return (delete(albums)..where((a) => a.id.isIn(ids))).go();
+  }
+
+  Future<int> deleteArtists(List<String> ids) {
+    if (ids.isEmpty) return Future<int>.value(0);
+    return (delete(artists)..where((a) => a.id.isIn(ids))).go();
+  }
+
   /// Flags a track playable/unplayable (see [Tracks.playable]). Called when the
   /// player fails to load a file so playback can route around it.
   Future<void> setTrackPlayable(String id, bool playable) async {

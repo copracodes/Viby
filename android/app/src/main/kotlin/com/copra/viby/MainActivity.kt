@@ -1,12 +1,14 @@
 package com.copra.viby
 
 import android.app.Activity
+import android.content.ContentUris
 import android.content.Context
 import android.content.Intent
 import android.database.ContentObserver
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -17,6 +19,7 @@ import com.ryanheise.audioservice.AudioServiceActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
+import java.io.File
 
 // audio_service requires the host Activity to extend AudioServiceActivity (not
 // the stock FlutterActivity) so the background audio handler and the UI share a
@@ -27,6 +30,9 @@ class MainActivity : AudioServiceActivity() {
 
     // The pending Flutter result awaiting the ACTION_OPEN_DOCUMENT_TREE picker.
     private var pendingPickResult: MethodChannel.Result? = null
+
+    // The pending Flutter result awaiting the system's delete-confirmation dialog.
+    private var pendingDeleteResult: MethodChannel.Result? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // Install the Android 12+ system splash (backported by core-splashscreen)
@@ -40,6 +46,82 @@ class MainActivity : AudioServiceActivity() {
         registerMediaObserver(flutterEngine)
         registerLyricsSaf(flutterEngine)
         registerConnectivity(flutterEngine)
+        registerMediaDelete(flutterEngine)
+    }
+
+    // Permanent deletion of audio files ("Delete from device").
+    //
+    // API 30+: the app may not delete another app's media directly. The correct
+    // (and only) path is MediaStore.createDeleteRequest, which hands back a
+    // PendingIntent — the SYSTEM then shows its own confirmation dialog, and on
+    // approval deletes both the file and its MediaStore row. So Dart must NOT add
+    // a second confirmation of its own there.
+    //
+    // API <= 29: no such request exists; we delete the row + the file ourselves
+    // (under the legacy WRITE_EXTERNAL_STORAGE permission) and Dart shows the
+    // confirmation dialog instead.
+    private fun registerMediaDelete(flutterEngine: FlutterEngine) {
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, MEDIA_DELETE_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "apiLevel" -> result.success(Build.VERSION.SDK_INT)
+                    "deleteTracks" -> {
+                        val ids = call.argument<List<Number>>("mediaIds")
+                            ?.map { it.toLong() } ?: emptyList()
+                        val paths = call.argument<List<String?>>("paths") ?: emptyList()
+                        deleteTracks(ids, paths, result)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+    }
+
+    private fun deleteTracks(
+        mediaIds: List<Long>,
+        paths: List<String?>,
+        result: MethodChannel.Result,
+    ) {
+        if (mediaIds.isEmpty()) {
+            result.success(DELETE_GRANTED)
+            return
+        }
+        val uris = mediaIds.map {
+            ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, it)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            if (pendingDeleteResult != null) {
+                result.error("busy", "A delete request is already in progress", null)
+                return
+            }
+            pendingDeleteResult = result
+            try {
+                val request = MediaStore.createDeleteRequest(contentResolver, uris)
+                startIntentSenderForResult(request.intentSender, REQ_DELETE_MEDIA, null, 0, 0, 0)
+            } catch (e: Exception) {
+                pendingDeleteResult = null
+                result.success(DELETE_FAILED)
+            }
+        } else {
+            result.success(deleteLegacy(uris, paths))
+        }
+    }
+
+    // API <= 29 path: delete the MediaStore row and the file on disk. Returns
+    // "granted" only if every entry is gone afterwards — a partial failure (e.g. a
+    // read-only SD card) reports "failed" so Dart leaves the DB untouched.
+    private fun deleteLegacy(uris: List<Uri>, paths: List<String?>): String {
+        var allGone = true
+        for ((i, uri) in uris.withIndex()) {
+            try {
+                contentResolver.delete(uri, null, null)
+            } catch (_: Exception) {
+                allGone = false
+            }
+            val path = paths.getOrNull(i) ?: continue
+            val file = File(path)
+            if (file.exists() && !file.delete()) allGone = false
+        }
+        return if (allGone) DELETE_GRANTED else DELETE_FAILED
     }
 
     // Reports whether the active network is unmetered (Wi-Fi / Ethernet), for the
@@ -154,6 +236,16 @@ class MainActivity : AudioServiceActivity() {
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQ_DELETE_MEDIA) {
+            val reply = pendingDeleteResult
+            pendingDeleteResult = null
+            // RESULT_OK = the user approved the system dialog and the files are
+            // gone. Anything else = declined; Dart leaves the library untouched.
+            reply?.success(
+                if (resultCode == Activity.RESULT_OK) DELETE_GRANTED else DELETE_DENIED,
+            )
+            return
+        }
         if (requestCode != REQ_PICK_LYRICS_FOLDER) return
         val reply = pendingPickResult
         pendingPickResult = null
@@ -235,6 +327,13 @@ class MainActivity : AudioServiceActivity() {
         private const val MEDIA_OBSERVER_CHANNEL = "com.copra.viby/media_observer"
         private const val LYRICS_SAF_CHANNEL = "com.copra.viby/lyrics_saf"
         private const val CONNECTIVITY_CHANNEL = "com.copra.viby/connectivity"
+        private const val MEDIA_DELETE_CHANNEL = "com.copra.viby/media_delete"
         private const val REQ_PICK_LYRICS_FOLDER = 0x4C7C // "LRC" pick request
+        private const val REQ_DELETE_MEDIA = 0x4DE1 // "DEL" request
+
+        // Outcomes reported to Dart (mirrored by DeleteOutcome in media_delete_channel.dart).
+        private const val DELETE_GRANTED = "granted"
+        private const val DELETE_DENIED = "denied"
+        private const val DELETE_FAILED = "failed"
     }
 }

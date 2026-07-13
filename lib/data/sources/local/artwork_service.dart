@@ -5,13 +5,21 @@ import 'package:on_audio_query_pluse/on_audio_query.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+/// Removes a cached artwork file. A narrow seam so `LibraryMaintenance` can
+/// evict orphaned art after a purge without depending on on_audio_query (and so
+/// tests can record evictions).
+abstract interface class ArtworkEvictor {
+  /// Deletes the on-disk art for [artworkKey]. A missing file is not an error.
+  Future<void> evictArtwork(String artworkKey);
+}
+
 /// Extracts and caches album artwork on disk.
 ///
 /// Art lives at `<appSupport>/artwork/<safeKey>.jpg`, where the key is the
 /// album's deterministic id (`local:album:<id>`). Colons aren't filesystem-safe
 /// everywhere, so the on-disk name is sanitised while the DB `artworkKey`
 /// keeps the logical id.
-class ArtworkService {
+class ArtworkService implements ArtworkEvictor {
   ArtworkService(this._audioQuery, {int size = 600}) : _size = size;
 
   final OnAudioQuery _audioQuery;
@@ -70,5 +78,11 @@ class ArtworkService {
     if (bytes == null || bytes.isEmpty) return false;
     await file.writeAsBytes(bytes, flush: true);
     return true;
+  }
+
+  @override
+  Future<void> evictArtwork(String artworkKey) async {
+    final File file = await fileFor(artworkKey);
+    if (file.existsSync()) await file.delete();
   }
 }

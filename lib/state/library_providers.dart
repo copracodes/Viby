@@ -8,8 +8,10 @@ import 'package:riverpod_annotation/riverpod_annotation.dart';
 import '../data/db/daos/library_dao.dart';
 import '../data/db/viby_database.dart';
 import '../data/sources/local/artwork_service.dart';
+import '../data/sources/local/library_maintenance.dart';
 import '../data/sources/local/library_seeder.dart';
 import '../data/sources/local/local_scanner.dart';
+import '../data/sources/local/media_delete_channel.dart';
 import '../data/sources/local/permission_service.dart';
 import '../data/sources/local/tag_repair_service.dart';
 import 'database_providers.dart';
@@ -36,11 +38,24 @@ TagRepairService tagRepairService(Ref ref) => TagRepairService(
   tagReader: const FileId3TagReader(),
 );
 
+/// The shared purge path (deleted files + tracks gone from MediaStore).
+@Riverpod(keepAlive: true)
+LibraryMaintenance libraryMaintenance(Ref ref) => LibraryMaintenance(
+  ref.watch(vibyDatabaseProvider),
+  artwork: ref.watch(artworkServiceProvider),
+);
+
+/// Permanent file deletion. A no-op implementation off Android, so the UI can
+/// simply check `capable` (CLAUDE.md rule 6).
+@Riverpod(keepAlive: true)
+MediaDeleter mediaDeleter(Ref ref) => buildMediaDeleter();
+
 @Riverpod(keepAlive: true)
 LocalScanner localScanner(Ref ref) => LocalScanner(
   audioQuery: ref.watch(onAudioQueryProvider),
   libraryDao: ref.watch(vibyDatabaseProvider).libraryDao,
   artworkService: ref.watch(artworkServiceProvider),
+  maintenance: ref.watch(libraryMaintenanceProvider),
   tagRepair: ref.watch(tagRepairServiceProvider),
   lyricsDao: ref.watch(vibyDatabaseProvider).lyricsDao,
 );

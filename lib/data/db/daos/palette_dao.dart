@@ -29,4 +29,12 @@ class PaletteDao extends DatabaseAccessor<VibyDatabase> with _$PaletteDaoMixin {
       ),
     );
   }
+
+  /// Evicts cached seeds whose artwork is gone (the art file was deleted with
+  /// the last track of an album). Idempotent.
+  Future<int> deleteSeeds(List<String> artworkKeys) {
+    if (artworkKeys.isEmpty) return Future<int>.value(0);
+    return (delete(artworkPalettes)..where((t) => t.artworkKey.isIn(artworkKeys)))
+        .go();
+  }
 }

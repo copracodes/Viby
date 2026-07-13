@@ -305,6 +305,29 @@ class PlaylistDao extends DatabaseAccessor<VibyDatabase>
     });
   }
 
+  /// Drops every entry referencing any of [trackIds] from **every** playlist and
+  /// re-compacts the affected playlists' positions. Called when tracks are purged
+  /// (deleted from device / gone from MediaStore): `trackId` is a plain key, not
+  /// an FK, so nothing cascades for us. Idempotent — a second call finds nothing
+  /// to remove and touches no playlist.
+  Future<void> removeTracksFromAllPlaylists(List<String> trackIds) async {
+    if (trackIds.isEmpty) return;
+    await transaction(() async {
+      final List<PlaylistEntryRow> doomed = await (select(playlistEntries)
+            ..where((t) => t.trackId.isIn(trackIds)))
+          .get();
+      if (doomed.isEmpty) return;
+      final Set<String> affected = <String>{
+        for (final PlaylistEntryRow e in doomed) e.playlistId,
+      };
+      await (delete(playlistEntries)..where((t) => t.trackId.isIn(trackIds))).go();
+      for (final String playlistId in affected) {
+        await _recompact(playlistId);
+        await _touch(playlistId);
+      }
+    });
+  }
+
   /// Moves the entry at index [from] to index [to], rewriting positions so they
   /// remain dense and correct.
   Future<void> reorderEntry({

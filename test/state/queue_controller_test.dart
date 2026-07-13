@@ -104,6 +104,18 @@ void main() {
       expect(state().currentIndex, 0); // wrapped to head
       expect(sink.calls, contains('skip(0)'));
     });
+
+    test('removing the ONLY item stops and tears the session down', () async {
+      await seed('a');
+      sink.calls.clear();
+      await controller.removeAt(0);
+
+      expect(state().isEmpty, isTrue);
+      expect(state().currentIndex, -1);
+      // clearQueue (stop + empty the media session), not a bare removal that
+      // would leave a stale notification behind.
+      expect(sink.calls, <String>['clear']);
+    });
   });
 
   group('removeTrackById (hide a song)', () {
@@ -134,6 +146,17 @@ void main() {
       await controller.removeTrackById('z');
       expect(_order(state()), 'abc');
       expect(state().currentTrack?.id, 'b');
+    });
+
+    test('deleting the only queued track leaves an empty, stopped queue',
+        () async {
+      await seed('a');
+      sink.calls.clear();
+      await controller.removeTrackById('a');
+
+      expect(state().isEmpty, isTrue);
+      expect(state().currentTrack, isNull);
+      expect(sink.calls, <String>['clear']);
     });
   });
 

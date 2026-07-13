@@ -279,12 +279,17 @@ class QueueController extends _$QueueController {
     final int old = state.currentIndex;
     final List<Track> order = List<Track>.of(state.tracks)..removeAt(index);
 
+    // Removing the only item leaves nothing to play: stop and tear the media
+    // session down (a bare removal would leave a stale notification behind).
+    if (order.isEmpty) {
+      await clear();
+      return;
+    }
+
     int newIndex;
     int? forcedSkip;
     bool stop = false;
-    if (order.isEmpty) {
-      newIndex = -1;
-    } else if (index < old) {
+    if (index < old) {
       newIndex = old - 1;
     } else if (index > old) {
       newIndex = old;
