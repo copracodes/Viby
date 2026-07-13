@@ -59,4 +59,9 @@ abstract interface class QueuePlaybackSink {
   /// The currently-playing queue index (null when idle/empty). Fires on
   /// auto-advance and OS-media-session skips as well as engine-driven jumps.
   Stream<int?> get currentIndexStream;
+
+  /// Whether a track follows the current one (repeat-aware). The engine owns
+  /// this answer and pushes it down; the sleep timer's "end of queue" mode needs
+  /// it, and the player alone can't compute it.
+  void setHasNext(bool hasNext);
 }

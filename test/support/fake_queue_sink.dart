@@ -25,6 +25,13 @@ class FakeSink implements QueuePlaybackSink {
   @override
   Stream<int?> get currentIndexStream => _index.stream;
 
+  /// The engine's repeat-aware "is there a next track" answer (the sleep timer's
+  /// end-of-queue mode consumes it).
+  bool hasNext = false;
+
+  @override
+  void setHasNext(bool value) => hasNext = value;
+
   @override
   Future<void> loadQueue(
     List<Track> tracks, {

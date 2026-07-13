@@ -14,6 +14,9 @@ import '../data/db/tables.dart' show RepeatMode, TrackSource;
 import '../data/models/track.dart';
 import 'eq_service.dart' show EqEngine;
 import 'playback_fault.dart';
+import 'replay_gain.dart';
+import 'sleep_timer.dart';
+import 'volume_mixer.dart';
 
 /// Asset path of the placeholder cover art shown when a track has no artwork.
 const String _kPlaceholderArtAsset = 'assets/placeholder_art.png';
@@ -123,6 +126,35 @@ class VibyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   final StreamController<PlaybackFault> _faults =
       StreamController<PlaybackFault>.broadcast();
 
+  // --- Volume: three factors, one authority (see volume_mixer.dart) ---------
+
+  /// ReplayGain scalar for the current track (1.0 = untouched).
+  double _gain = 1;
+
+  /// Interruption ducking (1.0 = not ducked).
+  double _duck = 1;
+
+  /// Fade envelope: resume fade-in and the sleep timer's fade-out.
+  double _fade = 1;
+
+  Timer? _fadeTimer;
+
+  ReplayGainSettings _rgSettings = const ReplayGainSettings();
+
+  // --- Sleep timer (lives here, in the audio layer, so it keeps running with
+  // the UI torn down / the app backgrounded) --------------------------------
+
+  SleepMode? _sleepMode;
+  DateTime? _sleepDeadline;
+  Timer? _sleepTicker;
+  final StreamController<SleepTimerState> _sleep =
+      StreamController<SleepTimerState>.broadcast();
+  SleepTimerState _sleepState = const SleepTimerState.idle();
+
+  /// Whether the queue has a track after the current one — needed by
+  /// [SleepEndOfQueue]. Kept in sync by the queue engine via [setHasNext].
+  bool _hasNext = false;
+
   // --- Streams surfaced to PlayerService (the facade throttles/maps them) ---
 
   Stream<Duration> get positionStream => _player.positionStream;
@@ -133,6 +165,9 @@ class VibyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
       _player.processingStateStream;
   Stream<int?> get currentIndexStream => _player.currentIndexStream;
   Stream<PlaybackFault> get faultStream => _faults.stream;
+  Stream<double> get speedStream => _player.speedStream;
+  Stream<SleepTimerState> get sleepTimerStream => _sleep.stream;
+  SleepTimerState get sleepTimerState => _sleepState;
 
   Future<void> _init() async {
     await _configureAudioSession();
@@ -159,9 +194,171 @@ class VibyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
     // Follow auto-advance / media-session skips: when the playing item changes,
     // surface its MediaItem so the notification shows the new track + art.
     _player.currentIndexStream.listen((int? index) {
-      if (index != null) _publishCurrentMediaItem(index);
+      if (index != null) {
+        _publishCurrentMediaItem(index);
+        // A new track carries its own ReplayGain: re-level immediately, before
+        // the first sample is heard (no fade — a track start must not swell).
+        _applyGainForCurrentTrack();
+      }
       _broadcastState();
     });
+  }
+
+  // --- Volume ---------------------------------------------------------------
+
+  /// Pushes the composed volume to the player. The ONLY caller of setVolume.
+  void _applyVolume() {
+    _player.setVolume(mixVolume(gain: _gain, duck: _duck, fade: _fade));
+  }
+
+  void _applyGainForCurrentTrack() {
+    final int? index = _player.currentIndex;
+    final Track? track =
+        (index != null && index >= 0 && index < _queue.length)
+            ? _queue[index]
+            : null;
+    _gain = replayGainScalar(track?.replayGain, _rgSettings);
+    _applyVolume();
+  }
+
+  /// Applies new volume-normalization settings, re-levelling the playing track
+  /// at once so the change is audible while you're moving the slider.
+  Future<void> setReplayGainSettings(ReplayGainSettings settings) async {
+    _rgSettings = settings;
+    _applyGainForCurrentTrack();
+  }
+
+  /// Ramps [_fade] to [target] over [duration] (linear, ~60fps). Cancels any
+  /// ramp in flight, so a resume during a sleep fade-out simply takes over.
+  void _rampFade(double target, Duration duration) {
+    _fadeTimer?.cancel();
+    if (duration <= Duration.zero) {
+      _fade = target;
+      _applyVolume();
+      return;
+    }
+    const Duration step = Duration(milliseconds: 16);
+    final double from = _fade;
+    final int steps = (duration.inMilliseconds / step.inMilliseconds).ceil();
+    int i = 0;
+    _fadeTimer = Timer.periodic(step, (Timer t) {
+      i++;
+      _fade = i >= steps ? target : from + (target - from) * (i / steps);
+      _applyVolume();
+      if (i >= steps) {
+        t.cancel();
+        _fadeTimer = null;
+      }
+    });
+  }
+
+  // --- Sleep timer ----------------------------------------------------------
+
+  /// Arms the sleep timer. [SleepAfter] is anchored to an absolute deadline (not
+  /// a countdown we decrement), so it stays correct even if the process is
+  /// starved while backgrounded.
+  Future<void> armSleepTimer(SleepMode mode) async {
+    _sleepMode = mode;
+    _sleepDeadline =
+        mode is SleepAfter ? DateTime.now().add(mode.duration) : null;
+    _sleepTicker?.cancel();
+    _sleepTicker = Timer.periodic(const Duration(seconds: 1), (_) => _tickSleep());
+    _tickSleep();
+  }
+
+  /// Pushes the deadline out by [extra] (the chip's "+15 min"). On a
+  /// condition-based mode there is no deadline to extend, so this re-arms as a
+  /// duration timer of [extra] from now.
+  Future<void> extendSleepTimer(Duration extra) async {
+    if (_sleepMode == null) return;
+    final DateTime? deadline = _sleepDeadline;
+    if (_sleepMode is SleepAfter && deadline != null) {
+      final Duration total = deadline.add(extra).difference(DateTime.now());
+      await armSleepTimer(SleepAfter(total.isNegative ? extra : total));
+    } else {
+      await armSleepTimer(SleepAfter(extra));
+    }
+  }
+
+  /// Disarms and undoes any fade the timer had started (so the music comes back
+  /// up rather than staying mysteriously quiet).
+  Future<void> cancelSleepTimer() async {
+    _sleepTicker?.cancel();
+    _sleepTicker = null;
+    _sleepMode = null;
+    _sleepDeadline = null;
+    _emitSleep(const SleepTimerState.idle());
+    if (_fade < 1) _rampFade(1, const Duration(milliseconds: 400));
+  }
+
+  void _tickSleep() {
+    final SleepMode? mode = _sleepMode;
+    if (mode == null) return;
+    final Duration? remaining = sleepRemaining(
+      mode: mode,
+      now: DateTime.now(),
+      deadline: _sleepDeadline,
+      position: _player.position,
+      trackDuration: _player.duration,
+      hasNext: _hasNext,
+    );
+    _emitSleep(SleepTimerState(mode: mode, remaining: remaining));
+
+    // Drive the fade from `remaining` rather than a one-shot ramp: it stays
+    // right if the user seeks, and a paused stretch doesn't drain the envelope.
+    final double level = sleepFadeLevel(remaining);
+    if (_fadeTimer == null && level != _fade) {
+      _fade = level;
+      _applyVolume();
+    }
+
+    if (sleepShouldStop(remaining)) {
+      _sleepTicker?.cancel();
+      _sleepTicker = null;
+      _sleepMode = null;
+      _sleepDeadline = null;
+      _emitSleep(const SleepTimerState.idle());
+      unawaited(_sleepStop());
+    }
+  }
+
+  /// Pause, then restore the envelope so the *next* play isn't silent.
+  Future<void> _sleepStop() async {
+    await _player.pause();
+    _fadeTimer?.cancel();
+    _fadeTimer = null;
+    _fade = 1;
+    _applyVolume();
+  }
+
+  void _emitSleep(SleepTimerState state) {
+    if (state == _sleepState) return;
+    _sleepState = state;
+    _sleep.add(state);
+  }
+
+  /// The queue engine tells us whether a next track exists (for
+  /// [SleepEndOfQueue]); the handler has the playlist but not the repeat-aware
+  /// answer, which the engine owns.
+  void setHasNext(bool hasNext) {
+    _hasNext = hasNext;
+  }
+
+  // --- Speed / skip silence -------------------------------------------------
+
+  /// Playback speed; pitch is preserved (just_audio leaves pitch at 1.0 unless
+  /// setPitch is called, so 1.5x doesn't turn into a chipmunk). Also the
+  /// media-session's own `setSpeed` callback, hence the override.
+  @override
+  Future<void> setSpeed(double speed) => _player.setSpeed(speed);
+
+  /// Android-only in just_audio; a no-op elsewhere.
+  Future<void> setSkipSilenceEnabled(bool enabled) async {
+    try {
+      await _player.setSkipSilenceEnabled(enabled);
+    } catch (e) {
+      developer.log('skip silence unsupported here', error: e);
+    }
   }
 
   /// Copies the bundled placeholder art to a real file so the OS media session
@@ -201,7 +398,11 @@ class VibyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
       if (event.begin) {
         switch (event.type) {
           case AudioInterruptionType.duck:
-            _player.setVolume(0.3);
+            // Ducking is a *factor*, not an absolute volume: setting 0.3 here
+            // would throw away the track's ReplayGain level, and restoring 1.0
+            // would silently un-normalize it.
+            _duck = kDuckFactor;
+            _applyVolume();
           case AudioInterruptionType.pause:
           case AudioInterruptionType.unknown:
             if (_player.playing) {
@@ -212,7 +413,8 @@ class VibyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
       } else {
         switch (event.type) {
           case AudioInterruptionType.duck:
-            _player.setVolume(1.0);
+            _duck = 1;
+            _applyVolume();
           case AudioInterruptionType.pause:
             if (_pausedByInterruption) {
               _pausedByInterruption = false;
@@ -458,11 +660,29 @@ class VibyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
 
   // --- Transport controls (routed from notification, buttons, and UI) ------
 
+  /// Resume, ramping the volume up over [kResumeFadeIn] instead of slamming
+  /// straight back to level — the "blast" on resume is the single most jarring
+  /// thing a player does, especially on headphones.
+  ///
+  /// This is a *resume* path only: a track that starts because the queue loaded
+  /// or advanced runs through `_player.play()` internally and is not faded (a
+  /// track should begin at its level, not swell into it). The fade multiplies
+  /// the ReplayGain scalar rather than replacing it (see `volume_mixer.dart`),
+  /// so we ramp up to the track's normalized level, never past it.
   @override
-  Future<void> play() => _player.play();
+  Future<void> play() async {
+    _fade = 0;
+    _applyVolume();
+    await _player.play();
+    _rampFade(1, kResumeFadeIn);
+  }
 
   @override
-  Future<void> pause() => _player.pause();
+  Future<void> pause() async {
+    _fadeTimer?.cancel();
+    _fadeTimer = null;
+    await _player.pause();
+  }
 
   @override
   Future<void> seek(Duration position) => _player.seek(position);

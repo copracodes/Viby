@@ -161,6 +161,10 @@ class QueueController extends _$QueueController {
     final StreamSubscription<int?> sub =
         _sink.currentIndexStream.listen(_onPlayerIndex);
     ref.onDispose(sub.cancel);
+    // Keep the audio layer's view of "is there a next track" fresh: it's
+    // repeat-aware, so only the engine can answer it, and the sleep timer's
+    // "end of queue" mode depends on it.
+    listenSelf((QueueState? _, QueueState next) => _sink.setHasNext(next.hasNext));
     return const QueueState.empty();
   }
 

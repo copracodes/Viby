@@ -7,6 +7,8 @@ import '../data/models/track.dart';
 import 'audio_handler.dart';
 import 'playback_fault.dart';
 import 'queue_playback_sink.dart';
+import 'replay_gain.dart';
+import 'sleep_timer.dart';
 
 /// Playback processing state, expressed as a Viby-domain enum so that UI and
 /// state layers can react to it without importing just_audio / audio_service
@@ -147,6 +149,38 @@ class PlayerService implements QueuePlaybackSink {
   /// layer reacts by marking it unplayable and showing a "skipped" message; the
   /// handler has already routed playback around it.
   Stream<PlaybackFault> get faults => _handler.faultStream;
+
+  // --- Finesse: normalization, sleep timer, speed, skip silence ------------
+
+  /// Applies volume-normalization settings; the playing track is re-levelled at
+  /// once (so dragging the pre-amp is audible).
+  Future<void> setReplayGainSettings(ReplayGainSettings settings) =>
+      _handler.setReplayGainSettings(settings);
+
+  /// The sleep timer's live state (armed mode + countdown). The timer itself
+  /// lives in the audio layer, so it keeps running with the UI disposed and the
+  /// app in the background.
+  Stream<SleepTimerState> get sleepTimer => _handler.sleepTimerStream;
+
+  SleepTimerState get sleepTimerState => _handler.sleepTimerState;
+
+  Future<void> armSleepTimer(SleepMode mode) => _handler.armSleepTimer(mode);
+  Future<void> extendSleepTimer(Duration extra) =>
+      _handler.extendSleepTimer(extra);
+  Future<void> cancelSleepTimer() => _handler.cancelSleepTimer();
+
+  /// Tells the timer whether a next track exists (for "end of queue"); the queue
+  /// engine owns that repeat-aware answer, the handler doesn't.
+  @override
+  void setHasNext(bool hasNext) => _handler.setHasNext(hasNext);
+
+  /// Playback speed (pitch preserved).
+  Stream<double> get speed => _handler.speedStream;
+  Future<void> setSpeed(double speed) => _handler.setSpeed(speed);
+
+  /// Skip silence (Android; a no-op elsewhere).
+  Future<void> setSkipSilenceEnabled(bool enabled) =>
+      _handler.setSkipSilenceEnabled(enabled);
 
   /// Releases underlying resources. In practice the handler lives for the whole
   /// app session, so this is mainly for symmetry / tests.
