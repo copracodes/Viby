@@ -24,6 +24,18 @@ void main() {
       "parsed_ok, resolved_at) VALUES ('local:1','online',1,'[00:01.00]Hi',1,0)",
     );
     await db.customStatement('ALTER TABLE lyrics_lines DROP COLUMN expires_at');
+    // Schema v9 added the ReplayGain columns to `tracks`; this test simulates an
+    // older database, so they must be dropped too — otherwise onUpgrade's
+    // `if (from < 9)` addColumn hits "duplicate column".
+    for (final String column in <String>[
+      'rg_track_gain_db',
+      'rg_track_peak',
+      'rg_album_gain_db',
+      'rg_album_peak',
+      'rg_scanned',
+    ]) {
+      await db.customStatement('ALTER TABLE tracks DROP COLUMN $column');
+    }
     await db.customStatement('PRAGMA user_version = 7');
     await db.close();
 

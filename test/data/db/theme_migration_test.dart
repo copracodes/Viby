@@ -18,6 +18,18 @@ void main() {
     await db.customStatement('ALTER TABLE tracks DROP COLUMN user_override');
     await db.customStatement('ALTER TABLE tracks DROP COLUMN liked');
     await db.customStatement('ALTER TABLE tracks DROP COLUMN liked_at');
+    // Schema v9 added the ReplayGain columns to `tracks`; this test simulates an
+    // older database, so they must be dropped too — otherwise onUpgrade's
+    // `if (from < 9)` addColumn hits "duplicate column".
+    for (final String column in <String>[
+      'rg_track_gain_db',
+      'rg_track_peak',
+      'rg_album_gain_db',
+      'rg_album_peak',
+      'rg_scanned',
+    ]) {
+      await db.customStatement('ALTER TABLE tracks DROP COLUMN $column');
+    }
     await db.customStatement('PRAGMA user_version = 3');
     await db.close();
 

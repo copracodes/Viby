@@ -21,6 +21,7 @@ TrackRow _row(String id, TrackSource source, {String? path = '/music/a.mp3'}) =>
       visibility: TrackVisibility.visible,
       userOverride: false,
       liked: false,
+      rgScanned: false,
     );
 
 void main() {

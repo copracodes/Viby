@@ -10,6 +10,7 @@ import 'core/router.dart';
 import 'state/fault_reporter.dart';
 import 'state/history_recorder.dart';
 import 'state/library_providers.dart';
+import 'state/playback_providers.dart';
 import 'state/queue_persistence.dart';
 import 'state/scan_triggers.dart';
 import 'state/theme_providers.dart';
@@ -43,6 +44,11 @@ class _VibyAppState extends ConsumerState<VibyApp> with WidgetsBindingObserver {
     ref.read(newSongsReporterProvider);
     // Start the native MediaStore observer (debounced auto-rescan on changes).
     ref.read(mediaWatcherProvider);
+    // Hydrate playback settings (volume normalization, skip silence) and push
+    // them into the audio layer. Read here rather than lazily from the Settings
+    // screen: they must apply to the FIRST track played, not to whenever the
+    // user happens to open Settings.
+    ref.read(playbackSettingsControllerProvider);
     unawaited(_restoreQueue());
     // Catch music added since the last session (cheap; gated by >5min).
     unawaited(ref.read(libraryScanProvider.notifier).maybeResumeScan());

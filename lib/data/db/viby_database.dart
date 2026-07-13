@@ -66,7 +66,7 @@ class VibyDatabase extends _$VibyDatabase {
   VibyDatabase.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 8;
+  int get schemaVersion => 9;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -124,6 +124,17 @@ class VibyDatabase extends _$VibyDatabase {
       // a duplicate.
       if (from >= 7 && from < 8) {
         await m.addColumn(lyricsLines, lyricsLines.expiresAt);
+      }
+      // v8 → v9: ReplayGain tags (volume normalization) + the marker that says
+      // the file has been examined, so untagged files aren't re-read every scan.
+      // Existing rows get nulls / not-scanned and are filled by the next scan's
+      // ReplayGain phase.
+      if (from < 9) {
+        await m.addColumn(tracks, tracks.rgTrackGainDb);
+        await m.addColumn(tracks, tracks.rgTrackPeak);
+        await m.addColumn(tracks, tracks.rgAlbumGainDb);
+        await m.addColumn(tracks, tracks.rgAlbumPeak);
+        await m.addColumn(tracks, tracks.rgScanned);
       }
     },
     beforeOpen: (OpeningDetails details) async {

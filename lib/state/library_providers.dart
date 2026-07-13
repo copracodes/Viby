@@ -13,6 +13,7 @@ import '../data/sources/local/library_seeder.dart';
 import '../data/sources/local/local_scanner.dart';
 import '../data/sources/local/media_delete_channel.dart';
 import '../data/sources/local/permission_service.dart';
+import '../data/sources/local/replay_gain_scanner.dart';
 import '../data/sources/local/tag_repair_service.dart';
 import 'database_providers.dart';
 import 'scan_triggers.dart';
@@ -57,6 +58,7 @@ LocalScanner localScanner(Ref ref) => LocalScanner(
   artworkService: ref.watch(artworkServiceProvider),
   maintenance: ref.watch(libraryMaintenanceProvider),
   tagRepair: ref.watch(tagRepairServiceProvider),
+  replayGain: ReplayGainScanner(ref.watch(vibyDatabaseProvider).libraryDao),
   lyricsDao: ref.watch(vibyDatabaseProvider).lyricsDao,
 );
 

@@ -46,6 +46,23 @@ class ArtistWithAlbums {
   final List<AlbumRow> albums;
 }
 
+/// One track's ReplayGain tags, as written back by the scan phase.
+class TrackReplayGain {
+  const TrackReplayGain({
+    required this.id,
+    this.trackGainDb,
+    this.trackPeak,
+    this.albumGainDb,
+    this.albumPeak,
+  });
+
+  final String id;
+  final double? trackGainDb;
+  final double? trackPeak;
+  final double? albumGainDb;
+  final double? albumPeak;
+}
+
 /// An album plus its resolved artist name — the row shape for the albums grid.
 class AlbumWithArtist {
   const AlbumWithArtist({required this.album, this.artistName});
@@ -617,6 +634,58 @@ class LibraryDao extends DatabaseAccessor<VibyDatabase>
           likedAt: r.likedAt,
         ),
     };
+  }
+
+  // --- ReplayGain (schema v9) ---------------------------------------------
+
+  /// Local tracks whose file hasn't been examined for ReplayGain tags yet.
+  /// Unfiltered by visibility (a hidden track can still be unhidden and played).
+  Future<List<TrackRow>> tracksMissingReplayGain() {
+    return (select(tracks)
+          ..where((t) =>
+              t.rgScanned.equals(false) &
+              t.source.equalsValue(TrackSource.local) &
+              t.filePath.isNotNull()))
+        .get();
+  }
+
+  /// Writes the ReplayGain columns for a batch of tracks, marking each examined
+  /// (so an untagged file is never re-read on the next scan — see
+  /// [Tracks.rgScanned]).
+  Future<void> writeReplayGain(List<TrackReplayGain> rows) async {
+    if (rows.isEmpty) return;
+    await batch((Batch b) {
+      for (final TrackReplayGain r in rows) {
+        b.update(
+          tracks,
+          TracksCompanion(
+            rgTrackGainDb: Value<double?>(r.trackGainDb),
+            rgTrackPeak: Value<double?>(r.trackPeak),
+            rgAlbumGainDb: Value<double?>(r.albumGainDb),
+            rgAlbumPeak: Value<double?>(r.albumPeak),
+            rgScanned: const Value<bool>(true),
+          ),
+          where: ($TracksTable t) => t.id.equals(r.id),
+        );
+      }
+    });
+  }
+
+  /// Marks tracks as needing a fresh ReplayGain read (their file changed), and
+  /// clears the stale values. Called by the incremental scanner, exactly like the
+  /// cached-lyrics drop.
+  Future<void> invalidateReplayGain(Iterable<String> ids) async {
+    final List<String> list = ids.toList();
+    if (list.isEmpty) return;
+    await (update(tracks)..where((t) => t.id.isIn(list))).write(
+      const TracksCompanion(
+        rgTrackGainDb: Value<double?>(null),
+        rgTrackPeak: Value<double?>(null),
+        rgAlbumGainDb: Value<double?>(null),
+        rgAlbumPeak: Value<double?>(null),
+        rgScanned: Value<bool>(false),
+      ),
+    );
   }
 
   // --- Synthetic seed data (debug) ----------------------------------------

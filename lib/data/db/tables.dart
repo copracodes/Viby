@@ -92,6 +92,22 @@ class Tracks extends Table {
   /// Songs is ordered by this, newest first.
   DateTimeColumn get likedAt => dateTime().nullable()();
 
+  /// ReplayGain tags read off the file (added in schema v9). Gains are dB
+  /// relative to the ReplayGain reference; peaks are sample peaks as a fraction
+  /// of full scale (1.0 = 0 dBFS) and are what let volume normalization avoid
+  /// clipping. All null on an untagged file — which is *kept distinct* from
+  /// "not looked at yet" by [rgScanned], so untagged files aren't re-read from
+  /// disk on every scan. The scanner never writes these columns in its normal
+  /// upsert (they're absent from the companion), so a rescan preserves them;
+  /// a *changed* file resets [rgScanned] and they're re-read.
+  RealColumn get rgTrackGainDb => real().nullable()();
+  RealColumn get rgTrackPeak => real().nullable()();
+  RealColumn get rgAlbumGainDb => real().nullable()();
+  RealColumn get rgAlbumPeak => real().nullable()();
+
+  /// Whether the file has been examined for ReplayGain tags (added in v9).
+  BoolColumn get rgScanned => boolean().withDefault(const Constant(false))();
+
   @override
   Set<Column> get primaryKey => {id};
 }

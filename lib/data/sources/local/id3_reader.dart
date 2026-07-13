@@ -41,6 +41,30 @@ class EmbeddedLyrics {
       (syncedEntries == null || syncedEntries!.isEmpty);
 }
 
+/// ReplayGain tags as they sit in the file (see [Id3Reader.parseReplayGain]).
+///
+/// This is the *data* layer's view — raw numbers, no policy. Turning them into a
+/// volume is the audio layer's job (`audio/replay_gain.dart`).
+class ReplayGainTags {
+  const ReplayGainTags({
+    this.trackGainDb,
+    this.trackPeak,
+    this.albumGainDb,
+    this.albumPeak,
+  });
+
+  final double? trackGainDb;
+  final double? trackPeak;
+  final double? albumGainDb;
+  final double? albumPeak;
+
+  bool get isEmpty =>
+      trackGainDb == null &&
+      trackPeak == null &&
+      albumGainDb == null &&
+      albumPeak == null;
+}
+
 /// A minimal, dependency-free ID3 tag reader (ID3v2.2/2.3/2.4 + ID3v1).
 ///
 /// It extracts only the title/artist/album text frames — enough to repair
@@ -102,6 +126,125 @@ class Id3Reader {
       pos = dataEnd;
     }
     return EmbeddedLyrics(unsyncedText: unsynced, syncedEntries: synced);
+  }
+
+  /// Extracts ReplayGain tags from an ID3v2 tag.
+  ///
+  /// Two encodings exist in the wild and both are read:
+  ///
+  /// * **`TXXX`** (by far the most common — what foobar2000, mp3gain, beets and
+  ///   loudgain all write): a user-defined text frame whose *description* is
+  ///   `replaygain_track_gain` / `..._peak` / `replaygain_album_gain` / `..._peak`
+  ///   and whose value is like `-7.35 dB` or `0.978210`. Descriptions are matched
+  ///   case-insensitively because writers disagree on case.
+  /// * **`RVA2`** (the ID3v2.4 standard frame, rarer): a fixed-point volume
+  ///   adjustment. Only the master-volume channel (0x01) is read; the peak field
+  ///   is skipped (its bit-depth is variable and mis-parsing it would be worse
+  ///   than not having it — clip protection simply won't engage).
+  ///
+  /// A `TXXX` value wins over `RVA2` when a file carries both, since it's what
+  /// the tool that computed the gain most likely wrote. Never throws.
+  static ReplayGainTags parseReplayGain(Uint8List b) {
+    if (b.length < 10 || b[0] != 0x49 || b[1] != 0x44 || b[2] != 0x33) {
+      return const ReplayGainTags();
+    }
+    final int major = b[3];
+    final int end = (10 + _synchsafe(b, 6)).clamp(0, b.length);
+
+    double? trackGain;
+    double? trackPeak;
+    double? albumGain;
+    double? albumPeak;
+    double? rva2Gain;
+
+    int pos = 10;
+    final bool v22 = major == 2;
+    final int idLen = v22 ? 3 : 4;
+    final int headerLen = v22 ? 6 : 10;
+
+    while (pos + headerLen <= end) {
+      if (b[pos] == 0) break;
+      final String id = _ascii(b, pos, idLen);
+      final int size = v22
+          ? _uint24(b, pos + 3)
+          : (major == 4 ? _synchsafe(b, pos + 4) : _uint32(b, pos + 4));
+      final int dataStart = pos + headerLen;
+      final int dataEnd = dataStart + size;
+      if (size <= 0 || dataEnd > end) break;
+      final Uint8List body = Uint8List.sublistView(b, dataStart, dataEnd);
+
+      if (id == 'TXXX' || id == 'TXX') {
+        final ({String key, String value})? kv = _decodeUserText(body);
+        if (kv != null) {
+          final double? value = _parseGainValue(kv.value);
+          if (value != null) {
+            switch (kv.key.toLowerCase()) {
+              case 'replaygain_track_gain':
+                trackGain ??= value;
+              case 'replaygain_track_peak':
+                trackPeak ??= value;
+              case 'replaygain_album_gain':
+                albumGain ??= value;
+              case 'replaygain_album_peak':
+                albumPeak ??= value;
+            }
+          }
+        }
+      } else if (id == 'RVA2') {
+        rva2Gain ??= _decodeRva2(body);
+      }
+      pos = dataEnd;
+    }
+
+    return ReplayGainTags(
+      trackGainDb: trackGain ?? rva2Gain,
+      trackPeak: trackPeak,
+      albumGainDb: albumGain,
+      albumPeak: albumPeak,
+    );
+  }
+
+  /// Decodes a `TXXX` body: enc(1) + null-terminated description + value.
+  static ({String key, String value})? _decodeUserText(Uint8List body) {
+    if (body.length < 2) return null;
+    final int enc = body[0];
+    final int keyEnd = _nullTerminatorIndex(body, 1, enc);
+    if (keyEnd < 0) return null;
+    final String key = _decodeString(Uint8List.sublistView(body, 1, keyEnd), enc);
+    final int valueStart = _afterNullTerminated(body, keyEnd, enc);
+    if (valueStart >= body.length) return null;
+    final String value =
+        _decodeString(Uint8List.sublistView(body, valueStart), enc);
+    return (key: key.trim(), value: value.trim());
+  }
+
+  /// `-7.35 dB` / `0.978210` / `+2,5 dB` → a double (null if unparseable).
+  static double? _parseGainValue(String raw) {
+    final String cleaned = raw
+        .replaceAll(RegExp(r'\s*dB\s*$', caseSensitive: false), '')
+        .replaceAll(',', '.')
+        .trim();
+    return double.tryParse(cleaned);
+  }
+
+  /// Decodes an `RVA2` body: null-terminated identifier, then per-channel
+  /// (channelType(1), volumeAdjustment(2, signed, 512 units = 1 dB),
+  /// peakBits(1), peak(peakBits bits)). Only the master channel (0x01) is used.
+  static double? _decodeRva2(Uint8List body) {
+    int pos = 0;
+    while (pos < body.length && body[pos] != 0) {
+      pos++;
+    }
+    pos++; // skip the NUL
+    while (pos + 3 <= body.length) {
+      final int channel = body[pos];
+      final int raw = (body[pos + 1] << 8) | body[pos + 2];
+      final int signed = raw >= 0x8000 ? raw - 0x10000 : raw;
+      final int peakBits = pos + 3 < body.length ? body[pos + 3] : 0;
+      if (channel == 0x01) return signed / 512.0;
+      pos += 4 + ((peakBits + 7) ~/ 8);
+    }
+    return null;
   }
 
   /// Decodes a `USLT` body: enc(1) + language(3) + null-terminated descriptor +

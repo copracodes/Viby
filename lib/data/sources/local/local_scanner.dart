@@ -10,12 +10,13 @@ import '../../db/viby_database.dart';
 import 'artwork_service.dart';
 import 'junk_filter.dart';
 import 'library_maintenance.dart';
+import 'replay_gain_scanner.dart';
 import 'scan_diff.dart';
 import 'song_mapper.dart';
 import 'tag_repair_service.dart';
 
 /// Phase of an in-flight scan.
-enum ScanPhase { querying, writing, artwork, repair, done }
+enum ScanPhase { querying, writing, artwork, replayGain, repair, done }
 
 /// A progress tick emitted during a scan. `found`/`processed` are phase-relative
 /// (tracks while writing, albums during artwork, suspicious rows during repair).
@@ -56,6 +57,7 @@ class LocalScanner {
     required ArtworkService artworkService,
     required LibraryMaintenance maintenance,
     TagRepairService? tagRepair,
+    ReplayGainScanner? replayGain,
     LyricsDao? lyricsDao,
     this.chunkSize = 500,
     this.minDurationMs = kMinTrackDurationMs,
@@ -64,6 +66,7 @@ class LocalScanner {
        _artworkService = artworkService,
        _maintenance = maintenance,
        _tagRepair = tagRepair,
+       _replayGain = replayGain,
        _lyricsDao = lyricsDao;
 
   final OnAudioQuery _audioQuery;
@@ -75,6 +78,11 @@ class LocalScanner {
   /// empty albums/artists, orphaned artwork) — see [LibraryMaintenance].
   final LibraryMaintenance _maintenance;
   final TagRepairService? _tagRepair;
+
+  /// Fills in ReplayGain tags for files not yet examined (a post-scan phase —
+  /// it's the only part of scanning that must open every file, so it runs after
+  /// the library is already browsable).
+  final ReplayGainScanner? _replayGain;
 
   /// Optional lyrics cache — when a track's file changed, its cached lyrics are
   /// dropped so they re-resolve on next play (deleted tracks cascade already).
@@ -194,9 +202,12 @@ class LocalScanner {
       toDelete = diff.deleted.toList();
       addedCount = diff.added.length;
       // A changed file may have gained/edited lyrics — drop its cache so they
-      // re-resolve on next play (deleted tracks cascade their lyrics away).
+      // re-resolve on next play (deleted tracks cascade their lyrics away). Its
+      // ReplayGain tags may equally have changed (a re-tag / re-encode), so mark
+      // it for a fresh read too.
       if (diff.changed.isNotEmpty) {
         await _lyricsDao?.deleteForTracks(diff.changed);
+        await _libraryDao.invalidateReplayGain(diff.changed);
       }
       developer.log(
         'diff: ${diff.added.length} added, ${diff.changed.length} changed, '
@@ -293,7 +304,33 @@ class LocalScanner {
       }
     }
 
-    // 5. REPAIR (mojibake tag re-decode; optional post-scan phase)
+    // 5. REPLAYGAIN (read volume-normalization tags off files not yet examined)
+    final ReplayGainScanner? replayGain = _replayGain;
+    if (replayGain != null && !_cancelled) {
+      out.add(const ScanProgress(
+        phase: ScanPhase.replayGain,
+        found: 0,
+        processed: 0,
+      ));
+      try {
+        await replayGain.scanPending(
+          isCancelled: () => _cancelled,
+          onProgress: (ReplayGainProgress p) => out.add(ScanProgress(
+            phase: ScanPhase.replayGain,
+            found: p.found,
+            processed: p.processed,
+            deleted: toDelete.length,
+            errors: artworkErrors,
+          )),
+        );
+      } catch (error, stack) {
+        // Never abort an otherwise-good scan over volume tags.
+        developer.log('replaygain scan failed',
+            name: 'viby.scanner', error: error, stackTrace: stack);
+      }
+    }
+
+    // 6. REPAIR (mojibake tag re-decode; optional post-scan phase)
     int repaired = 0;
     final TagRepairService? repair = _tagRepair;
     if (repair != null && !_cancelled) {
@@ -324,7 +361,7 @@ class LocalScanner {
       }
     }
 
-    // 6. DONE
+    // 7. DONE
     developer.log(
       'done: wrote $processed tracks, deleted ${toDelete.length}, '
       '$artworkErrors artwork errors, $repaired tags repaired, '

@@ -1,3 +1,4 @@
+import '../../audio/replay_gain.dart' show ReplayGainInfo;
 import '../db/tables.dart' show TrackSource;
 import '../db/viby_database.dart' show TrackRow;
 
@@ -27,6 +28,7 @@ class Track {
     this.remoteId,
     this.artworkKey,
     this.artworkPath,
+    this.replayGain,
   });
 
   /// Builds a domain [Track] from a drift [TrackRow], optionally enriched with
@@ -50,6 +52,12 @@ class Track {
       remoteId: row.remoteId,
       artworkKey: row.artworkKey,
       artworkPath: artworkPath,
+      replayGain: ReplayGainInfo(
+        trackGainDb: row.rgTrackGainDb,
+        trackPeak: row.rgTrackPeak,
+        albumGainDb: row.rgAlbumGainDb,
+        albumPeak: row.rgAlbumPeak,
+      ),
     );
   }
 
@@ -74,6 +82,11 @@ class Track {
   /// Resolved on-disk artwork file path; null if art isn't cached/known.
   final String? artworkPath;
 
+  /// The track's ReplayGain tags, if the scanner read any. The audio layer turns
+  /// these into a volume scalar (`audio/replay_gain.dart`); an untagged track
+  /// carries an empty [ReplayGainInfo] and plays untouched.
+  final ReplayGainInfo? replayGain;
+
   Duration get duration => Duration(milliseconds: durationMs);
 
   Track copyWith({String? artworkPath}) {
@@ -90,6 +103,7 @@ class Track {
       remoteId: remoteId,
       artworkKey: artworkKey,
       artworkPath: artworkPath ?? this.artworkPath,
+      replayGain: replayGain,
     );
   }
 
