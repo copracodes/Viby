@@ -11,11 +11,14 @@ import '../../data/sources/local/permission_service.dart';
 import '../../state/haptics_providers.dart';
 import '../../state/library_providers.dart';
 import '../../state/lyrics_providers.dart';
+import '../../audio/replay_gain.dart';
+import '../../state/playback_providers.dart';
 import '../../state/theme_providers.dart';
 import '../theme/theme_collection.dart';
 import '../theme/tokens.dart';
 import '../theme/viby_theme.dart';
 import '../widgets/theme_preview_card.dart';
+import '../widgets/viby_mark.dart';
 
 /// Settings: rescan (with progress), a theme stub, the Developer section
 /// (throwaway debug tools) and an About placeholder.
@@ -69,6 +72,9 @@ class SettingsScreen extends ConsumerWidget {
             trailing: const Icon(Icons.chevron_right),
             onTap: () => context.push(AppRoutes.hidden),
           ),
+          const Divider(),
+          const _SectionHeader('Playback'),
+          const _PlaybackSection(),
           const Divider(),
           const _SectionHeader('Audio'),
           ListTile(
@@ -208,6 +214,47 @@ class _AppearanceSection extends ConsumerWidget {
   }
 }
 
+/// Settings › Playback: volume normalization (its own screen — it has a mode,
+/// a slider and a caveat worth room) and skip silence (a toggle, so it lives
+/// right here).
+class _PlaybackSection extends ConsumerWidget {
+  const _PlaybackSection();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final PlaybackSettings settings =
+        ref.watch(playbackSettingsControllerProvider);
+    final PlaybackSettingsController controller =
+        ref.read(playbackSettingsControllerProvider.notifier);
+
+    return Column(
+      children: <Widget>[
+        ListTile(
+          leading: const Icon(Icons.equalizer_outlined),
+          title: const Text('Volume normalization'),
+          subtitle: Text(switch (settings.replayGain.mode) {
+            ReplayGainMode.off => 'Off',
+            ReplayGainMode.album => 'Album gain · even levels between albums',
+            ReplayGainMode.track => 'Track gain · every song at one level',
+          }),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => context.push(AppRoutes.playback),
+        ),
+        SwitchListTile(
+          secondary: const Icon(Icons.fast_forward_outlined),
+          value: settings.skipSilence,
+          onChanged: controller.setSkipSilence,
+          title: const Text('Skip silence'),
+          subtitle: const Text(
+            'Shortens silent gaps. Best for podcasts and live recordings — it '
+            'can clip the air out of quiet music',
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 /// About: version/build, themed licenses, and a credits line.
 class _AboutSection extends StatefulWidget {
   const _AboutSection();
@@ -239,7 +286,7 @@ class _AboutSectionState extends State<_AboutSection> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
         ListTile(
-          leading: const Icon(Icons.info_outline),
+          leading: VibyMark(size: 24, color: theme.colorScheme.primary),
           title: const Text('Viby'),
           subtitle: Text(
             _version.isEmpty ? 'A premium music player' : 'Version $_version',

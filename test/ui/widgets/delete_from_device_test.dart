@@ -49,6 +49,7 @@ TrackRow _row(String id, {TrackSource source = TrackSource.local}) => TrackRow(
       visibility: TrackVisibility.visible,
       userOverride: false,
       liked: false,
+      rgScanned: false,
     );
 
 /// Mounts a button that opens the track-actions sheet for [row].

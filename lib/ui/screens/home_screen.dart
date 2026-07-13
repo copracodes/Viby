@@ -12,6 +12,7 @@ import '../home/home_logic.dart';
 import '../player/pressable_scale.dart';
 import '../theme/tokens.dart';
 import '../widgets/album_art.dart';
+import '../widgets/viby_mark.dart';
 
 /// Home: a time-of-day greeting over recently played / added / top-tracks
 /// strips, or a welcoming scan call-to-action when the library is empty.
@@ -283,6 +284,7 @@ class _Setup extends StatelessWidget {
       ScanPhase.writing =>
         found > 0 ? '$found songs found…' : 'Bringing your music in…',
       ScanPhase.artwork => 'Fetching album art…',
+      ScanPhase.replayGain => 'Checking volume levels…',
       ScanPhase.repair => 'Tidying up tags…',
       ScanPhase.done => 'Almost there…',
     };
@@ -338,13 +340,15 @@ class _PermissionCta extends StatelessWidget {
             Container(
               width: 96,
               height: 96,
+              alignment: Alignment.center,
               decoration: BoxDecoration(
                 color: theme.colorScheme.primaryContainer,
                 shape: BoxShape.circle,
               ),
-              child: Icon(
-                Icons.library_music_outlined,
-                size: 44,
+              // The brand mark, not a stock icon: this is the first screen a new
+              // user sees, and it should be the same glyph they tapped to get here.
+              child: VibyMark(
+                size: 46,
                 color: theme.colorScheme.onPrimaryContainer,
               ),
             ),

@@ -43,6 +43,7 @@ TrackRow _track(String id, String title, int trackNo) => TrackRow(
       visibility: TrackVisibility.visible,
       userOverride: false,
       liked: false,
+      rgScanned: false,
     );
 
 final List<TrackRow> _tracks = <TrackRow>[

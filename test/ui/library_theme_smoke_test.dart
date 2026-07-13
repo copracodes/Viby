@@ -36,6 +36,7 @@ TrackWithMeta _meta(int i) => TrackWithMeta(
         visibility: TrackVisibility.visible,
         userOverride: false,
         liked: false,
+        rgScanned: false,
       ),
       albumName: 'Album',
       artistName: 'Artist',

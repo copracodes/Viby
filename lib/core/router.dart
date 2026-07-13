@@ -8,6 +8,7 @@ import '../ui/screens/debug_queue_screen.dart';
 import '../ui/screens/debug_scan_screen.dart';
 import '../ui/screens/eq_screen.dart';
 import '../ui/screens/hidden_songs_screen.dart';
+import '../ui/screens/playback_settings_screen.dart';
 import '../ui/screens/home_screen.dart';
 import '../ui/screens/liked_songs_screen.dart';
 import '../ui/screens/library_screen.dart';
@@ -37,6 +38,9 @@ class AppRoutes {
 
   /// Hidden songs manager (Settings › Library).
   static const String hidden = '/settings/hidden';
+
+  /// Volume normalization (ReplayGain) — Settings › Playback.
+  static const String playback = '/settings/playback';
 
   /// The virtual Liked Songs collection (under the Library tab).
   static const String liked = '/library/liked';
@@ -137,6 +141,11 @@ final GoRouter appRouter = GoRouter(
                   path: 'hidden',
                   builder: (BuildContext context, GoRouterState state) =>
                       const HiddenSongsScreen(),
+                ),
+                GoRoute(
+                  path: 'playback',
+                  builder: (BuildContext context, GoRouterState state) =>
+                      const PlaybackSettingsScreen(),
                 ),
                 if (!kReleaseMode)
                   GoRoute(

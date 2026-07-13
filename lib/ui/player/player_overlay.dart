@@ -12,6 +12,9 @@ import '../../state/queue_provider.dart';
 import '../theme/dynamic_theme_scope.dart';
 import '../theme/tokens.dart';
 import '../widgets/equalizer_bars.dart';
+import 'playback_chips.dart';
+import 'sleep_timer_sheet.dart';
+import 'speed_sheet.dart';
 import '../widgets/like_button.dart';
 import '../widgets/queue_list.dart';
 import 'artwork_stage.dart';
@@ -553,6 +556,36 @@ class _FullLayout extends ConsumerWidget {
                 icon: const Icon(Icons.queue_music),
                 onPressed: onOpenQueue,
               ),
+              PopupMenuButton<String>(
+                tooltip: 'More',
+                icon: const Icon(Icons.more_vert),
+                onSelected: (String value) {
+                  switch (value) {
+                    case 'sleep':
+                      showSleepTimerSheet(context, ref);
+                    case 'speed':
+                      showSpeedSheet(context, ref);
+                  }
+                },
+                itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
+                  const PopupMenuItem<String>(
+                    value: 'sleep',
+                    child: ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(Icons.bedtime_outlined),
+                      title: Text('Sleep timer'),
+                    ),
+                  ),
+                  const PopupMenuItem<String>(
+                    value: 'speed',
+                    child: ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(Icons.speed),
+                      title: Text('Playback speed'),
+                    ),
+                  ),
+                ],
+              ),
             ],
           ),
         ),
@@ -582,6 +615,7 @@ class _FullLayout extends ConsumerWidget {
               ),
               const SizedBox(height: Spacing.md),
               _QueueChip(queue: queue),
+              const PlaybackChips(),
               const SizedBox(height: Spacing.lg),
               const PlayerProgress(),
               const SizedBox(height: Spacing.sm),
