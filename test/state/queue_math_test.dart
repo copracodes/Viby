@@ -12,6 +12,32 @@ Track _t(String id) => Track(
     );
 
 void main() {
+  group('playNextTargetIndex (move a queued row to play next)', () {
+    test('any row after the current lands at current + 1 (post-removal)', () {
+      // current B (1): move a later row (4 or 3) → insert index 2 after removal.
+      expect(playNextTargetIndex(4, 1), 2);
+      expect(playNextTargetIndex(3, 1), 2);
+      // current A (0): move row 2 → 1.
+      expect(playNextTargetIndex(2, 0), 1);
+    });
+
+    test('a row before the current moves to current (post-removal shift)', () {
+      // [A B C D], current C (2): move A (0). Removing A shifts C to 1, so the
+      // post-removal insert index is 2 (right after C).
+      expect(playNextTargetIndex(0, 2), 2);
+      expect(playNextTargetIndex(1, 3), 3);
+    });
+
+    test('the current row, or the already-next row, is a no-op (null)', () {
+      expect(playNextTargetIndex(2, 2), isNull); // is the current track
+      // from == current + 1 → already immediately next → to == from → null.
+      expect(playNextTargetIndex(2, 1), isNull);
+      expect(playNextTargetIndex(3, 2), isNull);
+      // But a row two past the current is a real move.
+      expect(playNextTargetIndex(4, 2), 3);
+    });
+  });
+
   group('nextIndexAfterEnd (auto-advance rule per repeat mode)', () {
     test('repeat off: advances until the end, then stops (null)', () {
       expect(nextIndexAfterEnd(0, 3, RepeatMode.off), 1);

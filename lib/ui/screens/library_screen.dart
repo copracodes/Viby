@@ -120,7 +120,11 @@ class _ArtistsTab extends ConsumerWidget {
         itemBuilder: (BuildContext context, int i) {
           final ArtistRow artist = artists[i];
           return ListTile(
-            leading: ArtistAvatar(name: artist.name, radius: 20),
+            leading: ArtistArt(
+              artistId: artist.id,
+              name: artist.name,
+              radius: 20,
+            ),
             title: Text(artist.name.artistOrUnknown, maxLines: 1),
             onTap: () => context.push(AppRoutes.artist(artist.id)),
           );

@@ -283,4 +283,32 @@ void main() {
       expect(sink.calls, contains('clear'));
     });
   });
+
+  group('playNextInQueue (reorder a queued row, never duplicate)', () {
+    test('moving a later row keeps the current track playing and inserts after',
+        () async {
+      await seed('abcde', start: 1); // current = b
+      await controller.playNextInQueue(3); // move d to play next
+      expect(_order(state()), 'abdce');
+      expect(state().currentTrack?.id, 'b');
+      // Same length → a reorder, not an insert.
+      expect(state().length, 5);
+    });
+
+    test('moving an earlier row shifts the current index correctly', () async {
+      await seed('abcde', start: 2); // current = c
+      await controller.playNextInQueue(0); // move a to play next
+      expect(_order(state()), 'bcade');
+      expect(state().currentTrack?.id, 'c');
+      expect(state().length, 5);
+    });
+
+    test('the current track and the already-next row are no-ops', () async {
+      await seed('abcde', start: 1); // current = b
+      await controller.playNextInQueue(1); // b itself
+      expect(_order(state()), 'abcde');
+      await controller.playNextInQueue(2); // c is already next
+      expect(_order(state()), 'abcde');
+    });
+  });
 }

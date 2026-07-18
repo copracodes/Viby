@@ -20,4 +20,9 @@ class HapticsService {
   void selection() {
     if (_enabled()) HapticFeedback.selectionClick();
   }
+
+  /// A firmer buzz — a rejected action (e.g. an invalid A–B loop end).
+  void reject() {
+    if (_enabled()) HapticFeedback.heavyImpact();
+  }
 }

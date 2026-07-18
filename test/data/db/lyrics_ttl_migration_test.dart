@@ -24,6 +24,10 @@ void main() {
       "parsed_ok, resolved_at) VALUES ('local:1','online',1,'[00:01.00]Hi',1,0)",
     );
     await db.customStatement('ALTER TABLE lyrics_lines DROP COLUMN expires_at');
+    // Schema v10 added lyrics_lines.offset_ms; simulate its absence at v7 so the
+    // guarded `if (from >= 7 && from < 10)` addColumn doesn't hit "duplicate
+    // column".
+    await db.customStatement('ALTER TABLE lyrics_lines DROP COLUMN offset_ms');
     // Schema v9 added the ReplayGain columns to `tracks`; this test simulates an
     // older database, so they must be dropped too — otherwise onUpgrade's
     // `if (from < 9)` addColumn hits "duplicate column".

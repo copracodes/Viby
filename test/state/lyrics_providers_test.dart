@@ -25,6 +25,7 @@ void main() {
     final ProviderContainer container = ProviderContainer(overrides: <Override>[
       currentLyricsProvider.overrideWith((ref) async => _synced(<int>[1000, 3000, 7000])),
       positionProvider.overrideWith((ref) => pos.stream),
+      currentLyricsOffsetProvider.overrideWithValue(0),
     ]);
     addTearDown(container.dispose);
     addTearDown(pos.close);
@@ -59,6 +60,7 @@ void main() {
       positionProvider.overrideWith((ref) => Stream<Duration>.value(
             const Duration(seconds: 30),
           )),
+      currentLyricsOffsetProvider.overrideWithValue(0),
     ]);
     addTearDown(container.dispose);
 

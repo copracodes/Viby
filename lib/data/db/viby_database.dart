@@ -66,7 +66,7 @@ class VibyDatabase extends _$VibyDatabase {
   VibyDatabase.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 9;
+  int get schemaVersion => 10;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -135,6 +135,13 @@ class VibyDatabase extends _$VibyDatabase {
         await m.addColumn(tracks, tracks.rgAlbumGainDb);
         await m.addColumn(tracks, tracks.rgAlbumPeak);
         await m.addColumn(tracks, tracks.rgScanned);
+      }
+      // v9 → v10: manual per-track lyrics sync offset. Only add it when the
+      // lyrics table already existed at the old version; migrating from < 7 just
+      // created the table above with the current (v10) shape, so a second
+      // addColumn would be a duplicate (mirrors the v8 expiresAt guard).
+      if (from >= 7 && from < 10) {
+        await m.addColumn(lyricsLines, lyricsLines.offsetMs);
       }
     },
     beforeOpen: (OpeningDetails details) async {

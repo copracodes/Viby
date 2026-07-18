@@ -82,6 +82,7 @@ class _ArtistDetailScreenState extends ConsumerState<ArtistDetailScreen> {
                 flexibleSpace: FlexibleSpaceBar(
                   collapseMode: CollapseMode.parallax,
                   background: _HeaderArt(
+                    artistId: awa.artist.id,
                     name: awa.artist.name,
                     albumCount: albums.length,
                   ),
@@ -134,8 +135,13 @@ class _ArtistDetailScreenState extends ConsumerState<ArtistDetailScreen> {
 }
 
 class _HeaderArt extends StatelessWidget {
-  const _HeaderArt({required this.name, required this.albumCount});
+  const _HeaderArt({
+    required this.artistId,
+    required this.name,
+    required this.albumCount,
+  });
 
+  final String artistId;
   final String name;
   final int albumCount;
 
@@ -161,7 +167,7 @@ class _HeaderArt extends StatelessWidget {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.end,
             children: <Widget>[
-              ArtistAvatar(name: name, radius: 52),
+              ArtistArt(artistId: artistId, name: name, radius: 52),
               const SizedBox(height: Spacing.md),
               Text(
                 name.artistOrUnknown,

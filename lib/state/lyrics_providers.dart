@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 import '../data/lyrics/lyrics.dart';
+import '../data/lyrics/lyrics_offset.dart';
 import '../data/lyrics/lyrics_repository.dart';
 import '../data/lyrics/lyrics_saf_channel.dart';
 import '../data/lyrics/lyrics_sync.dart';
@@ -199,17 +200,37 @@ Future<Lyrics> currentLyrics(Ref ref) async {
   return ref.watch(lyricsRepositoryProvider).lyricsFor(track);
 }
 
+/// The manual sync offset (ms) for a given track — reactive, so dragging the
+/// "Adjust sync" stepper re-highlights the lyrics live.
+@riverpod
+Stream<int> lyricsOffset(Ref ref, String trackId) =>
+    ref.watch(vibyDatabaseProvider).lyricsDao.watchOffset(trackId);
+
+/// The current track's manual sync offset (ms; 0 when none / no track).
+@riverpod
+int currentLyricsOffset(Ref ref) {
+  final String? trackId = ref.watch(
+      queueControllerProvider.select((QueueState q) => q.currentTrack?.id));
+  if (trackId == null) return 0;
+  return ref.watch(lyricsOffsetProvider(trackId)).valueOrNull ?? 0;
+}
+
 /// The active lyric-line index at the current position — a **narrow** provider
 /// returning an `int`, so a position tick that doesn't cross a line boundary
 /// produces no downstream rebuild. Returns `-1` when there are no synced lyrics
-/// or before the first line's time.
+/// or before the first line's time. The manual [currentLyricsOffsetProvider] is
+/// applied additively (see [offsetAdjustedQueryMs]).
 @riverpod
 int lyricsActiveIndex(Ref ref) {
   final Lyrics? lyrics = ref.watch(currentLyricsProvider).valueOrNull;
   if (lyrics == null || !lyrics.isSynced) return -1;
   final Duration position =
       ref.watch(positionProvider).valueOrNull ?? Duration.zero;
-  return activeLineIndexFor(lyrics.lines, position.inMilliseconds);
+  final int offset = ref.watch(currentLyricsOffsetProvider);
+  return activeLineIndexFor(
+    lyrics.lines,
+    offsetAdjustedQueryMs(position.inMilliseconds, offset),
+  );
 }
 
 /// Actions on the current track's lyrics: tap-to-seek and manual refresh.
@@ -219,10 +240,31 @@ class LyricsController extends _$LyricsController {
   void build() {}
 
   /// Seeks playback to a line's start time (synced mode only; the UI gates the
-  /// gesture) with the standard selection haptic.
+  /// gesture) with the standard selection haptic. The manual sync offset is
+  /// applied so tapping a line seeks to where that line *actually* plays.
   void seekToLine(int startMs) {
     ref.read(hapticsServiceProvider).selection();
-    ref.read(playerServiceProvider).seek(Duration(milliseconds: startMs));
+    final int offset = ref.read(currentLyricsOffsetProvider);
+    ref
+        .read(playerServiceProvider)
+        .seek(Duration(milliseconds: offsetAdjustedStartMs(startMs, offset)));
+  }
+
+  /// Nudges the current track's manual sync offset by [deltaMs] (the ±0.5s
+  /// steppers). Persisted immediately; the reactive [lyricsOffsetProvider]
+  /// re-highlights live.
+  Future<void> nudgeOffset(int deltaMs) async {
+    final Track? track = ref.read(queueControllerProvider).currentTrack;
+    if (track == null) return;
+    final int next = ref.read(currentLyricsOffsetProvider) + deltaMs;
+    await ref.read(vibyDatabaseProvider).lyricsDao.setOffset(track.id, next);
+  }
+
+  /// Resets the current track's manual sync offset to 0.
+  Future<void> resetOffset() async {
+    final Track? track = ref.read(queueControllerProvider).currentTrack;
+    if (track == null) return;
+    await ref.read(vibyDatabaseProvider).lyricsDao.setOffset(track.id, 0);
   }
 
   /// Drops the current track's cached lyrics and re-resolves from disk (the

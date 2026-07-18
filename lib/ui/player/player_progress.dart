@@ -2,6 +2,8 @@ import 'package:audio_video_progress_bar/audio_video_progress_bar.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../audio/loop_region.dart';
+import '../../state/ab_loop_provider.dart';
 import '../../state/player_providers.dart';
 import '../theme/tokens.dart';
 
@@ -40,6 +42,8 @@ class _PlayerProgressState extends ConsumerState<PlayerProgress> {
         ref.watch(bufferedPositionProvider).valueOrNull ?? Duration.zero;
     final Duration total =
         ref.watch(trackDurationProvider).valueOrNull ?? Duration.zero;
+    final AbLoopState ab = ref.watch(abLoopControllerProvider);
+    final LoopRegion? region = ab is AbLoopArmed ? ab.region : null;
 
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
@@ -66,6 +70,26 @@ class _PlayerProgressState extends ConsumerState<PlayerProgress> {
                   .bodySmall
                   ?.copyWith(color: scheme.onSurfaceVariant),
             ),
+            // The armed A–B span, drawn over the bar line (labels sit below, so
+            // the bar zone is the top 14px — see `_kBarZoneHeight`).
+            if (region != null && total.inMilliseconds > 0)
+              Positioned(
+                left: 0,
+                top: 0,
+                width: constraints.maxWidth,
+                height: _kBarZoneHeight,
+                child: IgnorePointer(
+                  child: CustomPaint(
+                    painter: _LoopRegionPainter(
+                      aFraction:
+                          (region.aMs / total.inMilliseconds).clamp(0.0, 1.0),
+                      bFraction:
+                          (region.bMs / total.inMilliseconds).clamp(0.0, 1.0),
+                      color: scheme.primary,
+                    ),
+                  ),
+                ),
+              ),
             if (_scrubTime != null && _scrubX != null)
               _ScrubBubble(
                 time: _scrubTime!,
@@ -77,6 +101,58 @@ class _PlayerProgressState extends ConsumerState<PlayerProgress> {
       },
     );
   }
+}
+
+/// The vertical extent (logical px) the progress bar's line + thumb occupy at
+/// the top of the widget, before the time labels: `max(2 * thumbRadius,
+/// barHeight)` with the values passed to [ProgressBar] above.
+const double _kBarZoneHeight = 14;
+
+/// Paints the A–B loop span: a subtle low-alpha primary band between two thin
+/// full-height markers, aligned to the bar line.
+class _LoopRegionPainter extends CustomPainter {
+  const _LoopRegionPainter({
+    required this.aFraction,
+    required this.bFraction,
+    required this.color,
+  });
+
+  final double aFraction;
+  final double bFraction;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final double ax = aFraction * size.width;
+    final double bx = bFraction * size.width;
+    const double barHeight = 4;
+    final double barTop = (size.height - barHeight) / 2;
+
+    // The highlighted span, sitting on the bar line.
+    final Paint band = Paint()..color = color.withValues(alpha: 0.28);
+    canvas.drawRect(
+      Rect.fromLTRB(ax, barTop, bx, barTop + barHeight),
+      band,
+    );
+
+    // Two small markers at A and B, spanning the full bar zone.
+    final Paint marker = Paint()..color = color.withValues(alpha: 0.9);
+    for (final double x in <double>[ax, bx]) {
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(x.clamp(0.0, size.width - 2), 0, 2, size.height),
+          const Radius.circular(1),
+        ),
+        marker,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_LoopRegionPainter old) =>
+      old.aFraction != aFraction ||
+      old.bFraction != bFraction ||
+      old.color != color;
 }
 
 class _ScrubBubble extends StatelessWidget {

@@ -105,6 +105,22 @@ int? nextIndexAfterEnd(int current, int length, RepeatMode mode) {
   }
 }
 
+/// The post-removal insert index that moves the queue row at [from] to play
+/// immediately after the currently-playing track at [current] — the "Play next"
+/// action on a row already in the queue (a **reorder**, never a duplicate).
+///
+/// Returns null when there's nothing to do: the row *is* the current track, or
+/// it's already the very next one. Removing [from] shifts the current index down
+/// by one iff it sat before it, so the target is [current] (from before) or
+/// [current] + 1 (from after) — the index in the list *after* removal, exactly
+/// what [QueueController.reorder] expects.
+int? playNextTargetIndex(int from, int current) {
+  if (from == current) return null;
+  final int to = from < current ? current : current + 1;
+  if (to == from) return null; // already immediately after current
+  return to;
+}
+
 /// The result of rebuilding a persisted queue after tracks may have been
 /// deleted: [tracks] in saved order with missing ids dropped, [currentIndex]
 /// re-anchored to the saved current (or the nearest surviving earlier track).
@@ -359,6 +375,17 @@ class QueueController extends _$QueueController {
     state = state.copyWith(tracks: order, currentIndex: c);
     _syncOriginalIfUnshuffled(order);
     await _sink.moveTrack(from, insertAt);
+  }
+
+  /// "Play next" for a row already in the queue: reorders the track at [index]
+  /// to play right after the current one (never duplicates it — that's the
+  /// difference from [playNext], which inserts a *new* track). A no-op when the
+  /// row is the current track or already next.
+  Future<void> playNextInQueue(int index) async {
+    if (index < 0 || index >= state.length) return;
+    final int? to = playNextTargetIndex(index, state.currentIndex);
+    if (to == null) return;
+    await reorder(index, to);
   }
 
   // --- Shuffle / repeat ----------------------------------------------------

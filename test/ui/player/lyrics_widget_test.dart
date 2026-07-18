@@ -137,6 +137,7 @@ void main() {
           currentLyricsProvider
               .overrideWith((ref) async => _synced(<int>[1000, 3000, 7000])),
           positionProvider.overrideWith((ref) => pos.stream),
+          currentLyricsOffsetProvider.overrideWithValue(0),
         ],
         child: _host(
           Consumer(

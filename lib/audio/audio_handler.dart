@@ -13,6 +13,7 @@ import 'package:path_provider/path_provider.dart';
 import '../data/db/tables.dart' show RepeatMode, TrackSource;
 import '../data/models/track.dart';
 import 'eq_service.dart' show EqEngine;
+import 'loop_region.dart';
 import 'playback_fault.dart';
 import 'replay_gain.dart';
 import 'sleep_timer.dart';
@@ -155,6 +156,13 @@ class VibyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   /// [SleepEndOfQueue]. Kept in sync by the queue engine via [setHasNext].
   bool _hasNext = false;
 
+  // --- A–B repeat -----------------------------------------------------------
+
+  /// The armed A–B loop (null when off). While set, [_loopTicker] samples the
+  /// position finely and seeks back to A on reaching B.
+  LoopRegion? _loopRegion;
+  Timer? _loopTicker;
+
   // --- Streams surfaced to PlayerService (the facade throttles/maps them) ---
 
   Stream<Duration> get positionStream => _player.positionStream;
@@ -199,10 +207,61 @@ class VibyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
         // A new track carries its own ReplayGain: re-level immediately, before
         // the first sample is heard (no fade — a track start must not swell).
         _applyGainForCurrentTrack();
+        // An A–B loop belongs to a single track, so a *track change* cancels it
+        // — but only a real change. just_audio re-emits the current index after
+        // an in-track seek (which is exactly what the loop does on every pass),
+        // so clearing on any non-null emission would cancel the loop the instant
+        // it first jumped back. Gate on the index actually changing.
+        if (_lastIndex != null && index != _lastIndex) _clearLoopRegion();
       }
+      _lastIndex = index;
       _broadcastState();
     });
   }
+
+  /// The last playing index seen on [currentIndexStream], to distinguish a real
+  /// track change from a seek-triggered re-emit of the same index.
+  int? _lastIndex;
+
+  // --- A–B repeat -----------------------------------------------------------
+
+  /// Arms or clears the A–B loop. While armed, a fine (50ms) sampler seeks back
+  /// to A on reaching B — tighter than the 200ms position stream the facade
+  /// exposes, so the loop feels seamless; the timer runs **only** while a region
+  /// is set, so there's no idle cost. Clearing resumes normal playback from the
+  /// current position (no seek).
+  void setLoopRegion(LoopRegion? region) {
+    _loopTicker?.cancel();
+    _loopTicker = null;
+    _loopRegion = region;
+    _loopStreamController.add(region);
+    if (region == null) return;
+    _loopTicker = Timer.periodic(const Duration(milliseconds: 50), (_) {
+      final LoopRegion? r = _loopRegion;
+      if (r == null) return;
+      if (loopShouldSeekBack(
+        positionMs: _player.position.inMilliseconds,
+        region: r,
+      )) {
+        _player.seek(Duration(milliseconds: r.aMs));
+      }
+    });
+  }
+
+  /// Internal cancel used by track-change / skip (a skip works normally and
+  /// cancels the loop). A no-op when nothing is armed.
+  void _clearLoopRegion() {
+    if (_loopRegion == null && _loopTicker == null) return;
+    _loopTicker?.cancel();
+    _loopTicker = null;
+    _loopRegion = null;
+    _loopStreamController.add(null);
+  }
+
+  final StreamController<LoopRegion?> _loopStreamController =
+      StreamController<LoopRegion?>.broadcast();
+  Stream<LoopRegion?> get loopRegionStream => _loopStreamController.stream;
+  LoopRegion? get loopRegion => _loopRegion;
 
   // --- Volume ---------------------------------------------------------------
 
@@ -594,6 +653,7 @@ class VibyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
 
   Future<void> skipToIndex(int index) async {
     if (index < 0 || index >= _queue.length) return;
+    _clearLoopRegion();
     await _player.seek(Duration.zero, index: index);
   }
 
@@ -697,10 +757,14 @@ class VibyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   Future<void> skipToQueueItem(int index) => skipToIndex(index);
 
   @override
-  Future<void> skipToNext() => _player.seekToNext();
+  Future<void> skipToNext() {
+    _clearLoopRegion();
+    return _player.seekToNext();
+  }
 
   @override
   Future<void> skipToPrevious() async {
+    _clearLoopRegion();
     // Standard player behaviour: if we're more than 3s into the track, restart
     // it rather than jumping to the previous one.
     if (_player.position > const Duration(seconds: 3)) {
@@ -712,6 +776,8 @@ class VibyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
 
   /// Releases the underlying player. Called when the whole handler is torn down.
   Future<void> dispose() async {
+    _loopTicker?.cancel();
+    await _loopStreamController.close();
     await _faults.close();
     await _player.dispose();
   }

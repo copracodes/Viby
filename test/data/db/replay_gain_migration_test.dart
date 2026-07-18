@@ -29,6 +29,10 @@ void main() {
     ]) {
       await db.customStatement('ALTER TABLE tracks DROP COLUMN $column');
     }
+    // Schema v10 added lyrics_lines.offset_ms; simulate its absence at v8 so the
+    // guarded `if (from >= 7 && from < 10)` addColumn doesn't hit "duplicate
+    // column".
+    await db.customStatement('ALTER TABLE lyrics_lines DROP COLUMN offset_ms');
     await db.customStatement('PRAGMA user_version = 8');
     await db.close();
 

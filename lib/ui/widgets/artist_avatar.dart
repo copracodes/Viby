@@ -1,10 +1,45 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/display_names.dart';
+import '../../state/library_providers.dart';
+import 'album_art.dart';
+
+/// An artist portrait: the derived artwork of the artist's most-played album
+/// ([artistArtworkProvider]), circular-cropped, falling back to the letter
+/// [ArtistAvatar] when the artist has no album art. The single place an artist
+/// portrait is resolved.
+class ArtistArt extends ConsumerWidget {
+  const ArtistArt({
+    super.key,
+    required this.artistId,
+    required this.name,
+    this.radius = 24,
+  });
+
+  final String artistId;
+
+  /// The raw artist name (for the letter fallback; `<unknown>`/null handled).
+  final String? name;
+  final double radius;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final String? key =
+        ref.watch(artistArtworkProvider(artistId)).valueOrNull;
+    if (key == null) return ArtistAvatar(name: name, radius: radius);
+    // A square AlbumArt with a half-side corner radius reads as a circle, and
+    // reuses its shimmer/fade/placeholder handling.
+    return AlbumArt(
+      artworkKey: key,
+      size: radius * 2,
+      borderRadius: radius,
+    );
+  }
+}
 
 /// A circular artist placeholder: up to two initials drawn on the scheme's
-/// primary container. The single place an artist "portrait" is rendered (there's
-/// no artist artwork source yet).
+/// primary container. The letter fallback behind [ArtistArt].
 class ArtistAvatar extends StatelessWidget {
   const ArtistAvatar({super.key, required this.name, this.radius = 24});
 

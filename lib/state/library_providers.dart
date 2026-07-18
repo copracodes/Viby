@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:on_audio_query_pluse/on_audio_query.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
+import '../core/artist_art.dart';
 import '../data/db/daos/library_dao.dart';
 import '../data/db/viby_database.dart';
 import '../data/sources/local/artwork_service.dart';
@@ -333,6 +334,23 @@ Stream<ArtistRow?> artist(Ref ref, String artistId) =>
 @riverpod
 Stream<ArtistWithAlbums?> artistDetail(Ref ref, String artistId) =>
     ref.watch(vibyDatabaseProvider).libraryDao.watchArtistWithAlbums(artistId);
+
+/// The derived artwork key for an artist's portrait (their most-played album's
+/// art; see [pickArtistArtworkKey]). Null → the letter avatar.
+///
+/// Cached per artist and recomputed when a scan finishes (albums, artwork and
+/// play history may all have changed) — a deliberate one-shot rather than a live
+/// watch, so the avatar doesn't churn on every play tick.
+@riverpod
+Future<String?> artistArtwork(Ref ref, String artistId) async {
+  // Recompute once a scan completes.
+  ref.watch(libraryScanProvider.select((LibraryScanState s) => s is LibraryScanDone));
+  final List<ArtistArtCandidate> candidates = await ref
+      .watch(vibyDatabaseProvider)
+      .libraryDao
+      .artistArtCandidates(artistId);
+  return pickArtistArtworkKey(candidates);
+}
 
 /// Distinct recently-played tracks (newest first) — Home strip.
 @riverpod

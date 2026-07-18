@@ -5,6 +5,7 @@ import 'package:just_audio/just_audio.dart' show ProcessingState;
 import '../data/db/tables.dart' show RepeatMode;
 import '../data/models/track.dart';
 import 'audio_handler.dart';
+import 'loop_region.dart';
 import 'playback_fault.dart';
 import 'queue_playback_sink.dart';
 import 'replay_gain.dart';
@@ -181,6 +182,16 @@ class PlayerService implements QueuePlaybackSink {
   /// Skip silence (Android; a no-op elsewhere).
   Future<void> setSkipSilenceEnabled(bool enabled) =>
       _handler.setSkipSilenceEnabled(enabled);
+
+  // --- A–B repeat -----------------------------------------------------------
+
+  /// Arms (or clears, with null) the A–B loop on the current track. The audio
+  /// layer cancels it automatically on a track change or a skip.
+  void setLoopRegion(LoopRegion? region) => _handler.setLoopRegion(region);
+
+  /// The armed A–B loop, or null when off. Cancels itself on track change/skip.
+  Stream<LoopRegion?> get loopRegion => _handler.loopRegionStream;
+  LoopRegion? get loopRegionValue => _handler.loopRegion;
 
   /// Releases underlying resources. In practice the handler lives for the whole
   /// app session, so this is mainly for symmetry / tests.

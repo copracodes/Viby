@@ -1,5 +1,6 @@
 import 'package:drift/drift.dart';
 
+import '../../../core/artist_art.dart';
 import '../tables.dart';
 import '../util/stream_combine.dart';
 import '../viby_database.dart';
@@ -73,7 +74,7 @@ class AlbumWithArtist {
 
 /// Reactive reads and idempotent (batch) writes for the core library:
 /// tracks, albums and artists.
-@DriftAccessor(tables: <Type>[Tracks, Albums, Artists])
+@DriftAccessor(tables: <Type>[Tracks, Albums, Artists, PlayHistory])
 class LibraryDao extends DatabaseAccessor<VibyDatabase>
     with _$LibraryDaoMixin {
   LibraryDao(super.db);
@@ -177,6 +178,37 @@ class LibraryDao extends DatabaseAccessor<VibyDatabase>
             (t) => OrderingTerm(expression: t.name.lower()),
           ]))
         .watch();
+  }
+
+  /// The artist's albums with the signals the portrait picker ranks on: visible
+  /// track count and total play count per album. A deliberate `get()` (not a
+  /// reactive list): it backs the per-artist artwork cache, which a scan
+  /// invalidates. Play counts come from the join to [PlayHistory]; an album with
+  /// no plays still appears (LEFT JOIN) with a play count of 0.
+  Future<List<ArtistArtCandidate>> artistArtCandidates(String artistId) async {
+    final Expression<int> trackCount = tracks.id.count(distinct: true);
+    final Expression<int> playCount = playHistory.id.count();
+    final JoinedSelectStatement<HasResultSet, dynamic> statement =
+        select(albums).join(<Join<HasResultSet, dynamic>>[
+          innerJoin(
+            tracks,
+            tracks.albumId.equalsExp(albums.id) & _visible(tracks),
+          ),
+          leftOuterJoin(playHistory, playHistory.trackId.equalsExp(tracks.id)),
+        ])
+          ..where(albums.artistId.equals(artistId))
+          ..groupBy(<Expression<Object>>[albums.id]);
+    final List<TypedResult> rows = await statement.get();
+    return rows.map((TypedResult r) {
+      final AlbumRow album = r.readTable(albums);
+      return ArtistArtCandidate(
+        albumId: album.id,
+        name: album.name,
+        artworkKey: album.artworkKey,
+        trackCount: r.read(trackCount) ?? 0,
+        playCount: r.read(playCount) ?? 0,
+      );
+    }).toList();
   }
 
   /// A single artist row (for the album-detail header). Null while unknown.

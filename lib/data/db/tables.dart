@@ -311,6 +311,13 @@ class LyricsLines extends Table {
   /// local-only misses cleared explicitly on toggle/grant/rescan).
   DateTimeColumn get expiresAt => dateTime().nullable()();
 
+  /// Manual per-track sync correction in milliseconds (added in schema v10),
+  /// applied **additively** on top of the parser's own `[offset:]` tag: a
+  /// positive value delays the lyrics (they light up later). Defaults to 0 and
+  /// is *preserved* across lyrics re-resolution (the upsert doesn't touch it), so
+  /// a re-parse on next play keeps the correction the user dialled in by ear.
+  IntColumn get offsetMs => integer().withDefault(const Constant(0))();
+
   @override
   Set<Column> get primaryKey => {trackId};
 }

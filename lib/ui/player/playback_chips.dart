@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../audio/loop_region.dart';
 import '../../audio/sleep_timer.dart';
+import '../../state/ab_loop_provider.dart';
 import '../../state/playback_providers.dart';
 import '../theme/tokens.dart';
 import 'sleep_timer_sheet.dart';
@@ -19,9 +21,13 @@ class PlaybackChips extends ConsumerWidget {
     final SleepTimerState timer = ref.watch(sleepTimerProvider).valueOrNull ??
         const SleepTimerState.idle();
     final double speed = ref.watch(playbackSpeedProvider).valueOrNull ?? 1.0;
+    final AbLoopState ab = ref.watch(abLoopControllerProvider);
 
     final bool showSpeed = (speed - 1.0).abs() > 0.001;
-    if (!timer.isArmed && !showSpeed) return const SizedBox.shrink();
+    final bool showAb = ab is! AbLoopInactive;
+    if (!timer.isArmed && !showSpeed && !showAb) {
+      return const SizedBox.shrink();
+    }
 
     return Padding(
       padding: const EdgeInsets.only(top: Spacing.sm),
@@ -29,6 +35,16 @@ class PlaybackChips extends ConsumerWidget {
         alignment: WrapAlignment.center,
         spacing: Spacing.sm,
         children: <Widget>[
+          if (showAb)
+            _Chip(
+              // Pending A (waiting for B) reads as "A ✓"; armed reads "A-B" and
+              // is filled. Tapping advances the same state machine as the
+              // overflow entry (set B → clear).
+              icon: Icons.repeat_on_outlined,
+              label: ab is AbLoopArmed ? 'A-B' : 'A ✓',
+              active: ab is AbLoopArmed,
+              onTap: () => ref.read(abLoopControllerProvider.notifier).tap(),
+            ),
           if (timer.isArmed)
             _Chip(
               // The icon changes while fading, so the last 10s are legible at a
@@ -52,24 +68,35 @@ class PlaybackChips extends ConsumerWidget {
 }
 
 class _Chip extends StatelessWidget {
-  const _Chip({required this.icon, required this.label, required this.onTap});
+  const _Chip({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.active = false,
+  });
 
   final IconData icon;
   final String label;
   final VoidCallback onTap;
 
+  /// Filled (rather than outlined) — the loop is armed, not merely pending.
+  final bool active;
+
   @override
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
+    final Color fg = active ? scheme.onPrimary : scheme.primary;
     return ActionChip(
-      avatar: Icon(icon, size: 16, color: scheme.primary),
+      avatar: Icon(icon, size: 16, color: fg),
       label: Text(label),
-      labelStyle: Theme.of(context)
-          .textTheme
-          .labelMedium
-          ?.copyWith(color: scheme.primary),
-      side: BorderSide(color: scheme.primary.withValues(alpha: 0.4)),
-      backgroundColor: Colors.transparent,
+      labelStyle:
+          Theme.of(context).textTheme.labelMedium?.copyWith(color: fg),
+      side: BorderSide(
+        color: active
+            ? Colors.transparent
+            : scheme.primary.withValues(alpha: 0.4),
+      ),
+      backgroundColor: active ? scheme.primary : Colors.transparent,
       visualDensity: VisualDensity.compact,
       onPressed: onTap,
     );

@@ -10,6 +10,7 @@ import '../theme/tokens.dart';
 import '../widgets/album_art.dart';
 import 'lyrics_follow.dart';
 import 'lyrics_how_to.dart';
+import 'lyrics_offset_sheet.dart';
 import 'lyrics_search_sheet.dart';
 import 'player_progress.dart';
 import 'player_transport.dart';
@@ -201,6 +202,14 @@ class _LyricsViewState extends ConsumerState<LyricsView> {
             },
           ),
         ),
+        // A manual sync offset is in effect → a subtle caption at the top.
+        if (lyrics.isSynced)
+          Positioned(
+            top: Spacing.xs,
+            left: 0,
+            right: 0,
+            child: Center(child: _OffsetCaption(scheme: scheme)),
+          ),
         if (paused)
           Positioned(
             bottom: Spacing.xxl,
@@ -287,6 +296,8 @@ class _Header extends ConsumerWidget {
               switch (v) {
                 case 'refresh':
                   ref.read(lyricsControllerProvider.notifier).refresh();
+                case 'adjust':
+                  showLyricsOffsetSheet(context);
                 case 'search':
                   showLyricsSearchSheet(context);
                 case 'howto':
@@ -298,6 +309,14 @@ class _Header extends ConsumerWidget {
                 value: 'refresh',
                 child: Text('Refresh lyrics'),
               ),
+              // Only offer sync adjustment for time-synced lyrics (it does
+              // nothing for a static/unsynced sheet).
+              if (ref.watch(currentLyricsProvider).valueOrNull?.isSynced ??
+                  false)
+                const PopupMenuItem<String>(
+                  value: 'adjust',
+                  child: Text('Adjust sync'),
+                ),
               if (ref.watch(onlineLyricsSettingsProvider
                   .select((OnlineLyricsState s) => s.enabled)))
                 const PopupMenuItem<String>(
@@ -370,6 +389,45 @@ class _LyricLineTile extends StatelessWidget {
               height: 1.3,
             ),
             child: Text(line.text),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A small tappable caption shown while a manual sync offset is in effect
+/// ("Synced offset +0.5s"), hidden at 0. Tapping reopens the adjuster.
+class _OffsetCaption extends ConsumerWidget {
+  const _OffsetCaption({required this.scheme});
+  final ColorScheme scheme;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final int offset = ref.watch(currentLyricsOffsetProvider);
+    if (offset == 0) return const SizedBox.shrink();
+    return Material(
+      color: scheme.surfaceContainerHighest.withValues(alpha: 0.6),
+      borderRadius: Radii.brFull,
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () => showLyricsOffsetSheet(context),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(
+              horizontal: Spacing.md, vertical: Spacing.xs),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Icon(Icons.av_timer, size: 14, color: scheme.primary),
+              const SizedBox(width: Spacing.xs),
+              Text(
+                'Synced offset ${formatLyricsOffset(offset)}',
+                style: Theme.of(context)
+                    .textTheme
+                    .labelSmall
+                    ?.copyWith(color: scheme.primary),
+              ),
+            ],
           ),
         ),
       ),

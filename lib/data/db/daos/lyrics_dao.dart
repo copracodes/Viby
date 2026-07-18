@@ -30,6 +30,11 @@ class LyricsDao extends DatabaseAccessor<VibyDatabase> with _$LyricsDaoMixin {
   ///
   /// [expiresAt] is set only on a `none` row from an online miss (its 14-day
   /// TTL); null for positive results and local-only misses.
+  ///
+  /// Uses an explicit `DoUpdate` (not `insertOnConflictUpdate`) so the user's
+  /// manual [LyricsRow.offsetMs] correction is **left untouched** when lyrics
+  /// re-resolve — a cache refresh/re-parse must not silently reset the sync the
+  /// user dialled in. A fresh insert takes the column's default (0).
   Future<void> upsert({
     required String trackId,
     required LyricsSource source,
@@ -39,17 +44,44 @@ class LyricsDao extends DatabaseAccessor<VibyDatabase> with _$LyricsDaoMixin {
     DateTime? resolvedAt,
     DateTime? expiresAt,
   }) {
-    return into(lyricsLines).insertOnConflictUpdate(
-      LyricsRow(
+    final DateTime resolved = resolvedAt ?? DateTime.now();
+    return into(lyricsLines).insert(
+      LyricsLinesCompanion.insert(
         trackId: trackId,
         source: source,
-        synced: synced,
-        rawText: rawText,
-        parsedOk: parsedOk,
-        resolvedAt: resolvedAt ?? DateTime.now(),
-        expiresAt: expiresAt,
+        synced: Value(synced),
+        rawText: Value(rawText),
+        parsedOk: Value(parsedOk),
+        resolvedAt: resolved,
+        expiresAt: Value(expiresAt),
+      ),
+      onConflict: DoUpdate(
+        (_) => LyricsLinesCompanion(
+          source: Value(source),
+          synced: Value(synced),
+          rawText: Value(rawText),
+          parsedOk: Value(parsedOk),
+          resolvedAt: Value(resolved),
+          expiresAt: Value(expiresAt),
+        ),
+        target: <Column<Object>>[lyricsLines.trackId],
       ),
     );
+  }
+
+  /// The manual sync offset (ms) for [trackId], reactive — 0 when unset. Drives
+  /// the live "dial it in by ear" adjustment while playing.
+  Stream<int> watchOffset(String trackId) {
+    return (select(lyricsLines)..where((t) => t.trackId.equals(trackId)))
+        .watchSingleOrNull()
+        .map((LyricsRow? row) => row?.offsetMs ?? 0);
+  }
+
+  /// Persists the manual sync [offsetMs] for [trackId] (a no-op if no lyrics row
+  /// exists yet — you can only offset lyrics you have).
+  Future<void> setOffset(String trackId, int offsetMs) async {
+    await (update(lyricsLines)..where((t) => t.trackId.equals(trackId)))
+        .write(LyricsLinesCompanion(offsetMs: Value(offsetMs)));
   }
 
   /// Clears negative-cache (`none`) rows so previously-missed tracks re-resolve

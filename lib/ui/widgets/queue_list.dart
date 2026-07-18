@@ -70,11 +70,78 @@ class QueueListView extends ConsumerWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
-            trailing: const Icon(Icons.drag_handle),
+            // Overflow (Play next / Remove) + the drag handle. Long-press
+            // anywhere on the row still initiates a drag reorder.
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                _QueueRowMenu(
+                  isCurrent: isCurrent,
+                  onPlayNext: () {
+                    ref.read(hapticsServiceProvider).light();
+                    controller.playNextInQueue(index);
+                  },
+                  onRemove: () {
+                    ref.read(hapticsServiceProvider).light();
+                    controller.removeAt(index);
+                  },
+                ),
+                const Icon(Icons.drag_handle),
+              ],
+            ),
             onTap: () => controller.skipTo(index),
           ),
         );
       },
+    );
+  }
+}
+
+/// Per-row overflow: "Play next" (hidden on the current row, where it's a no-op)
+/// and "Remove from queue".
+class _QueueRowMenu extends StatelessWidget {
+  const _QueueRowMenu({
+    required this.isCurrent,
+    required this.onPlayNext,
+    required this.onRemove,
+  });
+
+  final bool isCurrent;
+  final VoidCallback onPlayNext;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    return PopupMenuButton<String>(
+      tooltip: 'Track options',
+      icon: const Icon(Icons.more_vert),
+      onSelected: (String value) {
+        switch (value) {
+          case 'playNext':
+            onPlayNext();
+          case 'remove':
+            onRemove();
+        }
+      },
+      itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
+        if (!isCurrent)
+          const PopupMenuItem<String>(
+            value: 'playNext',
+            child: ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(Icons.playlist_play),
+              title: Text('Play next'),
+            ),
+          ),
+        const PopupMenuItem<String>(
+          value: 'remove',
+          child: ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(Icons.remove_circle_outline),
+            title: Text('Remove from queue'),
+          ),
+        ),
+      ],
     );
   }
 }
