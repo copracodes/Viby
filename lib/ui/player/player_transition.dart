@@ -45,6 +45,69 @@ SettleTarget settleTarget({
 SettleTarget targetForTap(double value) =>
     value >= 0.5 ? SettleTarget.collapsed : SettleTarget.expanded;
 
+/// The three resting states of the player overlay, laid out on one continuous
+/// axis driven by a single controller (value 0 = [mini], 1 = [full], 2 =
+/// [queue]). The queue state is the "shrink-to-mini + queue list" layout; it's
+/// entered by tapping Queue and left by dragging down / back / the pill.
+enum PlayerOverlayState {
+  mini,
+  full,
+  queue;
+
+  /// The controller value this state rests at.
+  double get value => index.toDouble();
+}
+
+/// Settles the overlay onto one of the three [PlayerOverlayState]s when a drag is
+/// released. Generalises the two-state [settleTarget] rule to a multi-stop axis
+/// so mini ↔ full ↔ queue all interpolate on one controller:
+///
+/// - a fling (|velocity| over [flingVelocity]) carries one stop further in its
+///   direction than where the finger let go — "fling completes";
+/// - otherwise the release snaps to the nearest stop, **unless** it barely
+///   moved from [origin] (under [commitFraction] of a stop), in which case it
+///   springs back to the origin stop.
+///
+/// [value] and [origin] are in stop units (0..2). [velocity] is stop-units/sec,
+/// positive = toward queue (dragging up). This makes a single long drag down
+/// from queue able to pass through full and settle at mini (and every mid-flight
+/// interruption resolves to whichever stop the finger is nearest).
+PlayerOverlayState settleOverlay({
+  required double value,
+  required double velocity,
+  required double origin,
+  double flingVelocity = 1.2,
+  double commitFraction = 0.4,
+}) {
+  final bool fling = velocity.abs() > flingVelocity;
+  if (!fling && (value - origin).abs() < commitFraction) {
+    return _stopAt(origin.round());
+  }
+  final double resolved = fling ? value + (velocity > 0 ? 0.5 : -0.5) : value;
+  return _stopAt(resolved.round());
+}
+
+PlayerOverlayState _stopAt(int stop) =>
+    PlayerOverlayState.values[stop.clamp(0, PlayerOverlayState.values.length - 1)];
+
+/// The scroll offset that brings the current-track row to [alignment] of the
+/// viewport in the expanded queue list (0 = top, 0.5 = centre) — the
+/// "jump-to-current" affordance and the auto-scroll-on-open. Pure so the target
+/// is testable without a live ScrollController. Clamped to the scrollable range.
+double queueJumpOffset({
+  required int index,
+  required double itemExtent,
+  required double viewportHeight,
+  required int itemCount,
+  double alignment = 0.35,
+}) {
+  if (index <= 0) return 0;
+  final double raw = index * itemExtent - alignment * viewportHeight;
+  final double maxExtent =
+      (itemCount * itemExtent - viewportHeight).clamp(0, double.infinity);
+  return raw.clamp(0.0, maxExtent);
+}
+
 /// The outcome of an artwork horizontal swipe.
 enum SwipeOutcome { none, skipNext, skipPrevious }
 

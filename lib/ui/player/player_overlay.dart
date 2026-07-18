@@ -9,6 +9,7 @@ import '../../state/player_providers.dart';
 import '../../state/queue_provider.dart';
 import '../theme/dynamic_theme_scope.dart';
 import '../theme/tokens.dart';
+import '../widgets/album_art.dart';
 import '../widgets/equalizer_bars.dart';
 import 'playback_chips.dart';
 import 'secondary_toolbar.dart';
@@ -52,8 +53,17 @@ class _PlayerOverlayState extends ConsumerState<PlayerOverlay>
   // meaningful while fully expanded (_c.value == 1); the two cross-fade.
   late final AnimationController _lyricsC;
 
-  double _dragOrigin = 0;
+  // Queue sub-state: 0 = full Now Playing, 1 = shrink-to-mini + queue list. Only
+  // meaningful while fully expanded. Together with [_c] it forms one continuous
+  // mini(0) ↔ full(1) ↔ queue(2) axis (see [_axis]); the pure `settleOverlay`
+  // decides where a release lands so all three interpolate without jumps.
+  late final AnimationController _queueC;
+
   double _expandDistance = 1;
+
+  /// Pixel distance the full↔queue drag spans (shorter than the mini↔full
+  /// expand, so pulling the queue closed feels snappy). Set in build.
+  double _queueDragDistance = 300;
 
   @override
   void initState() {
@@ -68,30 +78,62 @@ class _PlayerOverlayState extends ConsumerState<PlayerOverlay>
       duration: Motion.emphasized,
       value: 0,
     );
+    _queueC = AnimationController(
+      vsync: this,
+      duration: Motion.emphasized,
+      value: 0,
+    );
   }
 
   @override
   void dispose() {
     _c.dispose();
     _lyricsC.dispose();
+    _queueC.dispose();
     super.dispose();
   }
+
+  /// The combined mini↔full↔queue position in stop units (0..2).
+  double get _axis => _c.value + _queueC.value;
 
   void _expandLyrics() => _lyricsC.animateTo(1,
       duration: Motion.emphasized, curve: Motion.emphasizedDecelerate);
   void _collapseLyrics() => _lyricsC.animateTo(0,
       duration: Motion.emphasized, curve: Motion.emphasizedAccelerate);
 
+  void _openQueueState() => _queueC.animateTo(1,
+      duration: Motion.emphasized, curve: Motion.emphasizedDecelerate);
+  void _closeQueueState() => _queueC.animateTo(0,
+      duration: Motion.emphasized, curve: Motion.emphasizedAccelerate);
+
   void _expand() =>
       _c.animateTo(1, duration: Motion.emphasized, curve: Motion.emphasizedDecelerate);
   void _collapse() {
-    // Reset the lyrics sub-state so re-opening the player shows the artwork.
+    // Reset the sub-states so re-opening the player shows the artwork.
     _lyricsC.value = 0;
+    _queueC.value = 0;
     _c.animateTo(0,
         duration: Motion.emphasized, curve: Motion.emphasizedAccelerate);
   }
 
-  void _onDragStart(DragStartDetails _) => _dragOrigin = _c.value;
+  /// Animates to a settled [PlayerOverlayState] (used after a drag release).
+  void _settleTo(PlayerOverlayState target) {
+    switch (target) {
+      case PlayerOverlayState.queue:
+        _queueC.animateTo(1,
+            duration: Motion.emphasized, curve: Motion.emphasizedDecelerate);
+      case PlayerOverlayState.full:
+        _queueC.animateTo(0,
+            duration: Motion.emphasized, curve: Motion.emphasizedDecelerate);
+        if (_c.value < 1) _expand();
+      case PlayerOverlayState.mini:
+        _collapse();
+    }
+  }
+
+  // --- Mini ↔ full drag (the panel while no queue is open) ------------------
+
+  void _onDragStart(DragStartDetails _) {}
 
   void _onDragUpdate(DragUpdateDetails d) {
     // Drag up (negative dy) opens.
@@ -104,9 +146,36 @@ class _PlayerOverlayState extends ConsumerState<PlayerOverlay>
     final SettleTarget target = settleTarget(
       value: _c.value,
       velocity: velocityFraction,
-      origin: _dragOrigin,
+      origin: _c.value >= 0.5 ? 1 : 0,
     );
     target == SettleTarget.expanded ? _expand() : _collapse();
+  }
+
+  // --- Queue drag (from the pill: full↔queue, continuing to mini) ------------
+
+  void _onQueueDragUpdate(DragUpdateDetails d) {
+    final double dy = d.delta.dy;
+    if (_queueC.value > 0 || dy < 0) {
+      // In the queue segment: a shorter drag distance.
+      final double next =
+          (_queueC.value - dy / _queueDragDistance).clamp(0.0, 1.0);
+      final double overflow = _queueC.value - dy / _queueDragDistance - next;
+      _queueC.value = next;
+      // Dragging further down once the queue is closed carries into collapsing
+      // the whole panel (queue → full → mini, no jump).
+      if (next == 0 && overflow < 0) {
+        _c.value = (_c.value + overflow * _queueDragDistance / _expandDistance)
+            .clamp(0.0, 1.0);
+      }
+    } else {
+      _c.value = (_c.value - dy / _expandDistance).clamp(0.0, 1.0);
+    }
+  }
+
+  void _onQueueDragEnd(DragEndDetails d) {
+    final double velocity =
+        -(d.primaryVelocity ?? 0) / _queueDragDistance;
+    _settleTo(settleOverlay(value: _axis, velocity: velocity, origin: 2));
   }
 
   @override
@@ -125,9 +194,10 @@ class _PlayerOverlayState extends ConsumerState<PlayerOverlay>
           final double navBar = PlayerOverlay.navBarHeight + pad.bottom;
           final double collapsedTop = h - navBar - PlayerOverlay.miniHeight;
           _expandDistance = collapsedTop <= 0 ? 1 : collapsedTop;
+          _queueDragDistance = (h * 0.4).clamp(1.0, double.infinity);
 
           return AnimatedBuilder(
-            animation: Listenable.merge(<Listenable>[_c, _lyricsC]),
+            animation: Listenable.merge(<Listenable>[_c, _lyricsC, _queueC]),
             builder: (BuildContext context, _) => _buildFrame(
               context,
               track: track,
@@ -175,14 +245,18 @@ class _PlayerOverlayState extends ConsumerState<PlayerOverlay>
     final double artRadius = _lerp(Radii.sm, Radii.lg, ct);
 
     final double fadeMini = (1 - t / 0.28).clamp(0.0, 1.0);
-    // Lyrics take over as `lv` rises; the artwork Now Playing fades out under it.
+    // Lyrics take over as `lv` rises; the queue state takes over as `qv` rises.
+    // Both fade the artwork Now Playing out under them.
     final double lv = Motion.standard.transform(_lyricsC.value.clamp(0.0, 1.0));
-    final double fadeFull = ((t - 0.35) / 0.65).clamp(0.0, 1.0) * (1 - lv);
+    final double qv = Motion.standard.transform(_queueC.value.clamp(0.0, 1.0));
+    final double fadeFull =
+        ((t - 0.35) / 0.65).clamp(0.0, 1.0) * (1 - lv) * (1 - qv);
     final bool playing = ref.watch(playingProvider).valueOrNull ?? false;
 
     return Stack(
       children: <Widget>[
-        // Backdrop — never hit-tests; opacity follows the transition.
+        // Backdrop — never hit-tests; opacity follows the transition. Stays up
+        // in the queue state so the dynamic theme keeps driving it.
         if (t > 0.001)
           Positioned.fill(
             child: IgnorePointer(
@@ -211,14 +285,14 @@ class _PlayerOverlayState extends ConsumerState<PlayerOverlay>
               track: track,
               fadeMini: fadeMini,
               fadeFull: fadeFull,
-              artFade: 1 - lv,
+              artFade: (1 - lv) * (1 - qv),
               playing: playing,
               // Artwork rect translated into panel-local coordinates.
               artLocalRect: artScreen.translate(0, -panelTop),
               artRadius: artRadius,
               topInset: pad.top,
               onCollapse: _collapse,
-              onOpenQueue: () => _openQueue(context),
+              onOpenQueue: _openQueueState,
               onExpandLyrics: _expandLyrics,
             ),
           ),
@@ -235,24 +309,35 @@ class _PlayerOverlayState extends ConsumerState<PlayerOverlay>
               ),
             ),
           ),
+
+        // The queue state: a top player pill + the expanded queue list,
+        // cross-faded above Now Playing as `qv` rises.
+        if (qv > 0.001)
+          Positioned.fill(
+            child: IgnorePointer(
+              ignoring: qv < 0.5,
+              child: Opacity(
+                opacity: qv,
+                child: _QueueOverlayState(
+                  track: track,
+                  playing: playing,
+                  topInset: pad.top,
+                  bottomInset: pad.bottom,
+                  onCollapseToFull: _closeQueueState,
+                  onPillDragUpdate: _onQueueDragUpdate,
+                  onPillDragEnd: _onQueueDragEnd,
+                  onClear: () => _confirmClear(context),
+                ),
+              ),
+            ),
+          ),
       ],
     );
   }
 
-  void _openQueue(BuildContext context) {
-    showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      isScrollControlled: true,
-      builder: (BuildContext sheetContext) => _QueueSheet(
-        onClear: () => _confirmClear(sheetContext),
-      ),
-    );
-  }
-
-  Future<void> _confirmClear(BuildContext sheetContext) async {
+  Future<void> _confirmClear(BuildContext context) async {
     final bool ok = await showDialog<bool>(
-          context: sheetContext,
+          context: context,
           builder: (BuildContext c) => AlertDialog(
             title: const Text('Clear queue?'),
             content: const Text('This stops playback and empties the queue.'),
@@ -271,7 +356,6 @@ class _PlayerOverlayState extends ConsumerState<PlayerOverlay>
         false;
     if (!ok) return;
     await ref.read(queueControllerProvider.notifier).clear();
-    if (sheetContext.mounted) Navigator.pop(sheetContext);
   }
 
   static double _lerp(double a, double b, double t) => a + (b - a) * t;
@@ -618,37 +702,198 @@ class _QueueChip extends StatelessWidget {
   }
 }
 
-/// The draggable queue sheet: "Up next" header, the shared reorder/remove list,
-/// and a clear-queue action (with confirm).
-class _QueueSheet extends StatelessWidget {
-  const _QueueSheet({required this.onClear});
+/// Nominal height of a queue row (a two-line [ListTile]) — used to compute the
+/// jump-to-current scroll offset (see [queueJumpOffset]).
+const double _kQueueRowExtent = 64;
 
+/// The queue "third state": a compact player pill docked at the top (drag it
+/// down / tap it to return to Now Playing) and the expanded reorder/remove queue
+/// list below, headered "Queue" with jump-to-current and clear-with-confirm.
+/// Auto-scrolls to the current track on open.
+class _QueueOverlayState extends ConsumerStatefulWidget {
+  const _QueueOverlayState({
+    required this.track,
+    required this.playing,
+    required this.topInset,
+    required this.bottomInset,
+    required this.onCollapseToFull,
+    required this.onPillDragUpdate,
+    required this.onPillDragEnd,
+    required this.onClear,
+  });
+
+  final Track track;
+  final bool playing;
+  final double topInset;
+  final double bottomInset;
+  final VoidCallback onCollapseToFull;
+  final ValueChanged<DragUpdateDetails> onPillDragUpdate;
+  final ValueChanged<DragEndDetails> onPillDragEnd;
   final VoidCallback onClear;
 
   @override
+  ConsumerState<_QueueOverlayState> createState() => _QueueOverlayStateState();
+}
+
+class _QueueOverlayStateState extends ConsumerState<_QueueOverlayState> {
+  final ScrollController _scroll = ScrollController();
+
+  @override
+  void initState() {
+    super.initState();
+    // Auto-scroll to the current track once the list is laid out.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _jumpToCurrent());
+  }
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  void _jumpToCurrent() {
+    if (!_scroll.hasClients) return;
+    final QueueState queue = ref.read(queueControllerProvider);
+    final double offset = queueJumpOffset(
+      index: queue.currentIndex,
+      itemExtent: _kQueueRowExtent,
+      viewportHeight: _scroll.position.viewportDimension,
+      itemCount: queue.length,
+    );
+    _scroll.animateTo(offset,
+        duration: Motion.emphasized, curve: Motion.emphasizedDecelerate);
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      height: MediaQuery.sizeOf(context).height * 0.7,
-      child: Column(
-        children: <Widget>[
-          Padding(
-            padding: const EdgeInsets.fromLTRB(
-                Spacing.lg, 0, Spacing.sm, Spacing.sm),
-            child: Row(
-              children: <Widget>[
-                Text('Up next', style: Theme.of(context).textTheme.titleMedium),
-                const Spacer(),
-                TextButton.icon(
-                  onPressed: onClear,
-                  icon: const Icon(Icons.clear_all),
-                  label: const Text('Clear'),
-                ),
-              ],
+    final ThemeData theme = Theme.of(context);
+    final ColorScheme scheme = theme.colorScheme;
+
+    return Material(
+      // Near-opaque surface so the list is readable; the dynamic scheme still
+      // tints it (and the themed backdrop shows through the translucency).
+      color: scheme.surface.withValues(alpha: 0.92),
+      child: Padding(
+        padding: EdgeInsets.only(top: widget.topInset, bottom: widget.bottomInset),
+        child: Column(
+          children: <Widget>[
+            // The floating player pill (drag down / tap → back to Now Playing).
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: widget.onCollapseToFull,
+              onVerticalDragUpdate: widget.onPillDragUpdate,
+              onVerticalDragEnd: widget.onPillDragEnd,
+              child: _PlayerPill(track: widget.track, playing: widget.playing),
             ),
-          ),
-          const Expanded(child: QueueListView()),
-        ],
+            // "Queue" header + jump-to-current + clear.
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                  Spacing.lg, Spacing.xs, Spacing.sm, Spacing.xs),
+              child: Row(
+                children: <Widget>[
+                  Text('Queue', style: theme.textTheme.titleMedium),
+                  const Spacer(),
+                  IconButton(
+                    tooltip: 'Jump to current',
+                    icon: const Icon(Icons.my_location),
+                    onPressed: _jumpToCurrent,
+                  ),
+                  TextButton.icon(
+                    onPressed: widget.onClear,
+                    icon: const Icon(Icons.clear_all),
+                    label: const Text('Clear'),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(child: QueueListView(scrollController: _scroll)),
+          ],
+        ),
       ),
+    );
+  }
+}
+
+/// The compact player pill docked atop the queue state: artwork thumb, title +
+/// artist, play/pause and next. A drag handle above hints the pull-down.
+class _PlayerPill extends ConsumerWidget {
+  const _PlayerPill({required this.track, required this.playing});
+
+  final Track track;
+  final bool playing;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final ThemeData theme = Theme.of(context);
+    final ColorScheme scheme = theme.colorScheme;
+    final bool hasNext = ref.watch(
+      queueControllerProvider.select((QueueState q) => q.hasNext),
+    );
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        // Drag-handle affordance.
+        Container(
+          margin: const EdgeInsets.only(top: Spacing.sm, bottom: Spacing.xs),
+          width: 36,
+          height: 4,
+          decoration: BoxDecoration(
+            color: scheme.onSurfaceVariant.withValues(alpha: 0.4),
+            borderRadius: Radii.brFull,
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(
+              Spacing.md, Spacing.xs, Spacing.xs, Spacing.sm),
+          child: Row(
+            children: <Widget>[
+              AlbumArt(artworkKey: track.artworkKey, size: 44),
+              const SizedBox(width: Spacing.md),
+              Expanded(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text(
+                      track.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.titleSmall,
+                    ),
+                    Text(
+                      track.artistName.artistOrUnknown,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodySmall
+                          ?.copyWith(color: scheme.onSurfaceVariant),
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                iconSize: 30,
+                onPressed: () {
+                  ref.read(hapticsServiceProvider).light();
+                  final PlayerService service = ref.read(playerServiceProvider);
+                  playing ? service.pause() : service.play();
+                },
+                icon: Icon(playing ? Icons.pause : Icons.play_arrow),
+              ),
+              IconButton(
+                iconSize: 30,
+                onPressed: hasNext
+                    ? () {
+                        ref.read(hapticsServiceProvider).light();
+                        ref.read(queueControllerProvider.notifier).next();
+                      }
+                    : null,
+                icon: const Icon(Icons.skip_next),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }

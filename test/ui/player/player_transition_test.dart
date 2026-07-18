@@ -47,6 +47,120 @@ void main() {
     });
   });
 
+  group('settleOverlay (three-state mini↔full↔queue axis)', () {
+    test('from full, a committed drag up settles on queue', () {
+      expect(
+        settleOverlay(value: 1.5, velocity: 0, origin: 1),
+        PlayerOverlayState.queue,
+      );
+    });
+
+    test('from full, a tiny drag springs back to full', () {
+      expect(
+        settleOverlay(value: 1.2, velocity: 0, origin: 1),
+        PlayerOverlayState.full,
+      );
+    });
+
+    test('a fling up from full completes to queue', () {
+      expect(
+        settleOverlay(value: 1.1, velocity: 3.0, origin: 1),
+        PlayerOverlayState.queue,
+      );
+    });
+
+    test('from queue, a short drag down returns to full', () {
+      expect(
+        settleOverlay(value: 1.4, velocity: 0, origin: 2),
+        PlayerOverlayState.full,
+      );
+    });
+
+    test('from queue, a long drag down passes full and collapses to mini', () {
+      expect(
+        settleOverlay(value: 0.3, velocity: 0, origin: 2),
+        PlayerOverlayState.mini,
+      );
+    });
+
+    test('from mini, a committed drag up settles on full', () {
+      expect(
+        settleOverlay(value: 0.6, velocity: 0, origin: 0),
+        PlayerOverlayState.full,
+      );
+    });
+
+    test('mid-flight interruption resolves to the nearest stop', () {
+      // Grabbed while animating full→queue and let go near queue.
+      expect(
+        settleOverlay(value: 1.7, velocity: 0, origin: 1),
+        PlayerOverlayState.queue,
+      );
+      // Grabbed near full.
+      expect(
+        settleOverlay(value: 1.3, velocity: 0, origin: 2),
+        PlayerOverlayState.full,
+      );
+    });
+
+    test('a fling never overshoots past the ends', () {
+      expect(
+        settleOverlay(value: 2.0, velocity: 5.0, origin: 2),
+        PlayerOverlayState.queue,
+      );
+      expect(
+        settleOverlay(value: 0.0, velocity: -5.0, origin: 0),
+        PlayerOverlayState.mini,
+      );
+    });
+
+    test('PlayerOverlayState.value maps onto the controller axis', () {
+      expect(PlayerOverlayState.mini.value, 0.0);
+      expect(PlayerOverlayState.full.value, 1.0);
+      expect(PlayerOverlayState.queue.value, 2.0);
+    });
+  });
+
+  group('queueJumpOffset (jump-to-current)', () {
+    test('index 0 sits at the top', () {
+      expect(
+        queueJumpOffset(
+          index: 0,
+          itemExtent: 64,
+          viewportHeight: 600,
+          itemCount: 50,
+        ),
+        0,
+      );
+    });
+
+    test('a mid-list row lands at the alignment fraction', () {
+      // 20 * 64 = 1280; minus 0.35 * 600 = 210 → 1070.
+      expect(
+        queueJumpOffset(
+          index: 20,
+          itemExtent: 64,
+          viewportHeight: 600,
+          itemCount: 50,
+        ),
+        1070,
+      );
+    });
+
+    test('clamps to the maximum scroll extent near the end', () {
+      // 50 items * 64 = 3200; max = 3200 - 600 = 2600.
+      expect(
+        queueJumpOffset(
+          index: 49,
+          itemExtent: 64,
+          viewportHeight: 600,
+          itemCount: 50,
+        ),
+        2600,
+      );
+    });
+  });
+
   group('resolveSwipe (artwork skip)', () {
     test('drag left past threshold with a next track skips next', () {
       expect(

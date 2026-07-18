@@ -11,9 +11,13 @@ import 'album_art.dart';
 /// track highlighted. Shared by the Now Playing queue sheet and the debug
 /// queue screen — every row action drives `QueueController`.
 class QueueListView extends ConsumerWidget {
-  const QueueListView({super.key, this.padding});
+  const QueueListView({super.key, this.padding, this.scrollController});
 
   final EdgeInsets? padding;
+
+  /// External scroll controller (the queue overlay state drives auto-scroll /
+  /// jump-to-current through it).
+  final ScrollController? scrollController;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -26,6 +30,7 @@ class QueueListView extends ConsumerWidget {
     }
 
     return ReorderableListView.builder(
+      scrollController: scrollController,
       padding: padding,
       itemCount: queue.length,
       onReorder: (int oldIndex, int newIndex) {
