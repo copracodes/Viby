@@ -12,13 +12,12 @@ import '../theme/tokens.dart';
 import '../widgets/album_art.dart';
 import '../widgets/equalizer_bars.dart';
 import 'playback_chips.dart';
-import 'secondary_toolbar.dart';
+import 'player_progress_row.dart';
 import '../widgets/queue_list.dart';
 import 'artwork_stage.dart';
 import 'lyrics_peek.dart';
 import 'lyrics_view.dart';
 import 'now_playing_backdrop.dart';
-import 'player_progress.dart';
 import 'player_transport.dart';
 import 'player_transition.dart';
 
@@ -657,16 +656,12 @@ class _FullLayout extends ConsumerWidget {
               _QueueChip(queue: queue),
               const PlaybackChips(),
               const SizedBox(height: Spacing.lg),
-              const PlayerProgress(),
+              // Scrubber flanked by the quiet corner actions (Love/A-B · Queue/More).
+              ProgressWithActions(trackId: track.id, onOpenQueue: onOpenQueue),
               const SizedBox(height: Spacing.sm),
               const PlayerTransport(),
-              SecondaryToolbar(
-                trackId: track.id,
-                onOpenQueue: onOpenQueue,
-                onOpenLyrics: onExpandLyrics,
-              ),
               // Lyrics peek — hidden entirely when the track has no lyrics, so
-              // the block reflows with no dead space.
+              // the block reflows with no dead space (and is the lyrics entry).
               LyricsPeek(onExpand: onExpandLyrics),
             ],
           ),
@@ -770,20 +765,30 @@ class _QueueOverlayStateState extends ConsumerState<_QueueOverlayState> {
     final ColorScheme scheme = theme.colorScheme;
 
     return Material(
-      // Near-opaque surface so the list is readable; the dynamic scheme still
-      // tints it (and the themed backdrop shows through the translucency).
-      color: scheme.surface.withValues(alpha: 0.92),
+      // Transparent so the queue state shares the ONE themed backdrop (behind
+      // the whole overlay) — the blurred artwork + scheme scrim morph on a track
+      // change exactly as they do in full Now Playing. An opaque surface here
+      // would hide that per-track tint (only the accent would appear to change).
+      type: MaterialType.transparency,
       child: Padding(
         padding: EdgeInsets.only(top: widget.topInset, bottom: widget.bottomInset),
         child: Column(
           children: <Widget>[
-            // The floating player pill (drag down / tap → back to Now Playing).
+            // The floating player pill + the grabber below it form one draggable
+            // header (drag down / tap → back to Now Playing; drag further →
+            // collapse). The grabber marks where the sheet content begins.
             GestureDetector(
               behavior: HitTestBehavior.opaque,
               onTap: widget.onCollapseToFull,
               onVerticalDragUpdate: widget.onPillDragUpdate,
               onVerticalDragEnd: widget.onPillDragEnd,
-              child: _PlayerPill(track: widget.track, playing: widget.playing),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  _PlayerPill(track: widget.track, playing: widget.playing),
+                  _Grabber(scheme: scheme),
+                ],
+              ),
             ),
             // "Queue" header + jump-to-current + clear.
             Padding(
@@ -814,8 +819,30 @@ class _QueueOverlayStateState extends ConsumerState<_QueueOverlayState> {
   }
 }
 
-/// The compact player pill docked atop the queue state: artwork thumb, title +
-/// artist, play/pause and next. A drag handle above hints the pull-down.
+/// The drag-handle "grabber" — sits directly below the pill, marking where the
+/// draggable sheet content begins.
+class _Grabber extends StatelessWidget {
+  const _Grabber({required this.scheme});
+
+  final ColorScheme scheme;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: Spacing.sm),
+      width: 36,
+      height: 4,
+      decoration: BoxDecoration(
+        color: scheme.onSurfaceVariant.withValues(alpha: 0.4),
+        borderRadius: Radii.brFull,
+      ),
+    );
+  }
+}
+
+/// The compact floating player pill docked atop the queue state: artwork thumb,
+/// title + artist, play/pause and next, on a translucent card so it reads as a
+/// pill over the (now visible) themed backdrop.
 class _PlayerPill extends ConsumerWidget {
   const _PlayerPill({required this.track, required this.playing});
 
@@ -830,23 +857,19 @@ class _PlayerPill extends ConsumerWidget {
       queueControllerProvider.select((QueueState q) => q.hasNext),
     );
 
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: <Widget>[
-        // Drag-handle affordance.
-        Container(
-          margin: const EdgeInsets.only(top: Spacing.sm, bottom: Spacing.xs),
-          width: 36,
-          height: 4,
-          decoration: BoxDecoration(
-            color: scheme.onSurfaceVariant.withValues(alpha: 0.4),
-            borderRadius: Radii.brFull,
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(
-              Spacing.md, Spacing.xs, Spacing.xs, Spacing.sm),
-          child: Row(
+    return Container(
+      margin: const EdgeInsets.fromLTRB(Spacing.md, Spacing.sm, Spacing.md, 0),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest.withValues(alpha: 0.6),
+        borderRadius: Radii.brLg,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+                Spacing.md, Spacing.xs, Spacing.xs, Spacing.sm),
+            child: Row(
             children: <Widget>[
               AlbumArt(artworkKey: track.artworkKey, size: 44),
               const SizedBox(width: Spacing.md),
@@ -894,6 +917,7 @@ class _PlayerPill extends ConsumerWidget {
           ),
         ),
       ],
+      ),
     );
   }
 }
