@@ -82,9 +82,8 @@ void main() {
     expect(sink.calls.any((String c) => c.startsWith('reorder(')), isTrue);
     expect(container.read(queueControllerProvider).shuffleOn, isTrue);
 
-    await tester.tap(find.byIcon(Icons.repeat));
-    await tester.pumpAndSettle();
-    expect(sink.calls, contains('repeat(all)'));
+    // Repeat is no longer in the transport (it moved to the secondary toolbar).
+    expect(find.byIcon(Icons.repeat), findsNothing);
   });
 
   testWidgets('a single-track queue dims Next and Previous',

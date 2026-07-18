@@ -1,9 +1,8 @@
-import 'package:flutter/material.dart' hide RepeatMode;
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../audio/player_service.dart';
 import '../../core/haptics.dart';
-import '../../data/db/tables.dart' show RepeatMode;
 import '../../state/haptics_providers.dart';
 import '../../state/player_providers.dart';
 import '../../state/queue_provider.dart';
@@ -11,10 +10,14 @@ import '../theme/tokens.dart';
 import 'pressable_scale.dart';
 import 'player_transition.dart';
 
-/// The Now Playing transport row: shuffle · previous · play/pause · next ·
-/// repeat. The play/pause button is a filled circle with an [AnimatedIcon] shape
-/// morph; every control has springy press feedback ([PressableScale]) and the
-/// 1.4 disabled-state rules (dimmed + inert Next at the queue end, Previous
+/// The Now Playing transport row: shuffle · previous · play/pause · next.
+///
+/// Repeat moved to the secondary toolbar (Step 2.2 restructure) so the transport
+/// stays uncluttered; shuffle stays here as a primary behaviour. A trailing
+/// spacer that matches the shuffle control keeps the big play button optically
+/// centred. The play/pause button is a filled circle with an [AnimatedIcon]
+/// shape morph; every control has springy press feedback ([PressableScale]) and
+/// the 1.4 disabled-state rules (dimmed + inert Next at the queue end, Previous
 /// gated by [canGoPrevious]).
 class PlayerTransport extends ConsumerWidget {
   const PlayerTransport({super.key});
@@ -31,13 +34,6 @@ class PlayerTransport extends ConsumerWidget {
 
     final bool canPrevious =
         canGoPrevious(hasPrevious: queue.hasPrevious, position: position);
-
-    final Color repeatColor = queue.repeatMode == RepeatMode.off
-        ? scheme.onSurfaceVariant
-        : scheme.primary;
-    final IconData repeatIcon = queue.repeatMode == RepeatMode.one
-        ? Icons.repeat_one
-        : Icons.repeat;
 
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -76,21 +72,16 @@ class PlayerTransport extends ConsumerWidget {
                 }
               : null,
         ),
-        _IconControl(
-          icon: repeatIcon,
-          tooltip: 'Repeat',
-          color: repeatColor,
-          onTap: queue.isEmpty
-              ? null
-              : () {
-                  haptics.selection();
-                  controller.cycleRepeat();
-                },
-        ),
+        // Balances the shuffle control on the left so play stays centred.
+        const SizedBox(width: _kControlSlot),
       ],
     );
   }
 }
+
+/// Footprint of a default [_IconControl] (icon 28 + Spacing.sm padding each
+/// side) — used to balance the transport row so the play button is centred.
+const double _kControlSlot = 28 + Spacing.sm * 2;
 
 class _IconControl extends StatelessWidget {
   const _IconControl({

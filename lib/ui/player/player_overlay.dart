@@ -1,10 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 
 import '../../audio/player_service.dart';
 import '../../core/display_names.dart';
-import '../../core/router.dart';
 import '../../data/models/track.dart';
 import '../../state/haptics_providers.dart';
 import '../../state/player_providers.dart';
@@ -13,9 +11,7 @@ import '../theme/dynamic_theme_scope.dart';
 import '../theme/tokens.dart';
 import '../widgets/equalizer_bars.dart';
 import 'playback_chips.dart';
-import 'sleep_timer_sheet.dart';
-import 'speed_sheet.dart';
-import '../widgets/like_button.dart';
+import 'secondary_toolbar.dart';
 import '../widgets/queue_list.dart';
 import 'artwork_stage.dart';
 import 'lyrics_peek.dart';
@@ -532,7 +528,8 @@ class _FullLayout extends ConsumerWidget {
 
     return Stack(
       children: <Widget>[
-        // Top bar.
+        // Top bar — just the collapse chevron now; all actions moved to the
+        // secondary toolbar beneath the transport.
         Positioned(
           top: topInset,
           left: Spacing.xs,
@@ -545,47 +542,6 @@ class _FullLayout extends ConsumerWidget {
                 onPressed: onCollapse,
               ),
               const Spacer(),
-              LikeButton(trackId: track.id),
-              IconButton(
-                tooltip: 'Equalizer',
-                icon: const Icon(Icons.graphic_eq),
-                onPressed: () => context.push(AppRoutes.eq),
-              ),
-              IconButton(
-                tooltip: 'Queue',
-                icon: const Icon(Icons.queue_music),
-                onPressed: onOpenQueue,
-              ),
-              PopupMenuButton<String>(
-                tooltip: 'More',
-                icon: const Icon(Icons.more_vert),
-                onSelected: (String value) {
-                  switch (value) {
-                    case 'sleep':
-                      showSleepTimerSheet(context, ref);
-                    case 'speed':
-                      showSpeedSheet(context, ref);
-                  }
-                },
-                itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
-                  const PopupMenuItem<String>(
-                    value: 'sleep',
-                    child: ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: Icon(Icons.bedtime_outlined),
-                      title: Text('Sleep timer'),
-                    ),
-                  ),
-                  const PopupMenuItem<String>(
-                    value: 'speed',
-                    child: ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: Icon(Icons.speed),
-                      title: Text('Playback speed'),
-                    ),
-                  ),
-                ],
-              ),
             ],
           ),
         ),
@@ -620,6 +576,11 @@ class _FullLayout extends ConsumerWidget {
               const PlayerProgress(),
               const SizedBox(height: Spacing.sm),
               const PlayerTransport(),
+              SecondaryToolbar(
+                trackId: track.id,
+                onOpenQueue: onOpenQueue,
+                onOpenLyrics: onExpandLyrics,
+              ),
               // Lyrics peek — hidden entirely when the track has no lyrics, so
               // the block reflows with no dead space.
               LyricsPeek(onExpand: onExpandLyrics),
