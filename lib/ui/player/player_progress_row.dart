@@ -33,23 +33,30 @@ class ProgressWithActions extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final AbLoopState ab = ref.watch(abLoopControllerProvider);
 
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
+    // Icons sit on their own row above the scrubber so neither is cramped:
+    // Love + A-B pinned left, Queue + More pinned right.
+    return Column(
+      mainAxisSize: MainAxisSize.min,
       children: <Widget>[
-        LikeButton(trackId: trackId, size: 20),
-        _CornerAction(
-          icon: Icons.repeat_on_outlined,
-          tooltip: 'A-B repeat',
-          active: ab is! AbLoopInactive,
-          onTap: () => ref.read(abLoopControllerProvider.notifier).tap(),
+        Row(
+          children: <Widget>[
+            LikeButton(trackId: trackId, size: 20),
+            _CornerAction(
+              icon: Icons.repeat_on_outlined,
+              tooltip: 'A-B repeat',
+              active: ab is! AbLoopInactive,
+              onTap: () => ref.read(abLoopControllerProvider.notifier).tap(),
+            ),
+            const Spacer(),
+            _CornerAction(
+              icon: Icons.queue_music,
+              tooltip: 'Queue',
+              onTap: onOpenQueue,
+            ),
+            const _MoreAction(),
+          ],
         ),
-        const Expanded(child: PlayerProgress()),
-        _CornerAction(
-          icon: Icons.queue_music,
-          tooltip: 'Queue',
-          onTap: onOpenQueue,
-        ),
-        const _MoreAction(),
+        const PlayerProgress(),
       ],
     );
   }

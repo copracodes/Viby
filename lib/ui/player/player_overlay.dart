@@ -9,7 +9,6 @@ import '../../state/player_providers.dart';
 import '../../state/queue_provider.dart';
 import '../theme/dynamic_theme_scope.dart';
 import '../theme/tokens.dart';
-import '../widgets/album_art.dart';
 import '../widgets/equalizer_bars.dart';
 import 'playback_chips.dart';
 import 'player_progress_row.dart';
@@ -223,12 +222,18 @@ class _PlayerOverlayState extends ConsumerState<PlayerOverlay>
   }) {
     final double t = _c.value;
     final double ct = Motion.standard.transform(t.clamp(0.0, 1.0));
+    // Lyrics take over as `lv` rises; the queue state as `qv` rises.
+    final double lv = Motion.standard.transform(_lyricsC.value.clamp(0.0, 1.0));
+    final double qv = Motion.standard.transform(_queueC.value.clamp(0.0, 1.0));
 
     // Panel rect (screen coords): mini-bar strip → full screen.
     final double panelTop = _lerp(collapsedTop, 0, ct);
     final double panelBottom = _lerp(navBar, 0, ct); // inset from bottom
 
-    // Artwork shared-element rect (screen coords).
+    // Shared-element artwork rect (screen coords), interpolated across ALL three
+    // states: mini thumb → full hero → pill thumb. Driving the artwork's size +
+    // position off `qv` (not just its opacity) is what makes the queue→full drag
+    // read as the pill *growing* back into Now Playing rather than a cross-fade.
     const double miniArt = 48;
     final double fullArt = (w - 2 * Spacing.xl).clamp(0.0, h * 0.5);
     final Rect miniRect = Rect.fromLTWH(
@@ -240,16 +245,27 @@ class _PlayerOverlayState extends ConsumerState<PlayerOverlay>
     final double fullArtTop = pad.top + Spacing.xxxl + Spacing.lg;
     final Rect fullRect =
         Rect.fromLTWH((w - fullArt) / 2, fullArtTop, fullArt, fullArt);
-    final Rect artScreen = Rect.lerp(miniRect, fullRect, ct)!;
-    final double artRadius = _lerp(Radii.sm, Radii.lg, ct);
+    // Where the pill's thumbnail sits (matches _PlayerPill's card margin/padding).
+    const double pillArt = 44;
+    final Rect pillRect = Rect.fromLTWH(
+      2 * Spacing.md,
+      pad.top + Spacing.sm + Spacing.xs,
+      pillArt,
+      pillArt,
+    );
+    final Rect artScreen =
+        Rect.lerp(Rect.lerp(miniRect, fullRect, ct)!, pillRect, qv)!;
+    final double artRadius =
+        _lerp(_lerp(Radii.sm, Radii.lg, ct), Radii.sm, qv);
 
     final double fadeMini = (1 - t / 0.28).clamp(0.0, 1.0);
-    // Lyrics take over as `lv` rises; the queue state takes over as `qv` rises.
-    // Both fade the artwork Now Playing out under them.
-    final double lv = Motion.standard.transform(_lyricsC.value.clamp(0.0, 1.0));
-    final double qv = Motion.standard.transform(_queueC.value.clamp(0.0, 1.0));
     final double fadeFull =
         ((t - 0.35) / 0.65).clamp(0.0, 1.0) * (1 - lv) * (1 - qv);
+    // The artwork stays visible through the queue morph (it MOVES, doesn't fade);
+    // only lyrics take it away.
+    final double artFade = 1 - lv;
+    // Swipe-to-skip + drag-to-collapse are live only at rest in full Now Playing.
+    final bool artInteractive = t > 0.98 && qv < 0.02 && lv < 0.02;
     final bool playing = ref.watch(playingProvider).valueOrNull ?? false;
 
     return Stack(
@@ -284,11 +300,7 @@ class _PlayerOverlayState extends ConsumerState<PlayerOverlay>
               track: track,
               fadeMini: fadeMini,
               fadeFull: fadeFull,
-              artFade: (1 - lv) * (1 - qv),
               playing: playing,
-              // Artwork rect translated into panel-local coordinates.
-              artLocalRect: artScreen.translate(0, -panelTop),
-              artRadius: artRadius,
               topInset: pad.top,
               onCollapse: _collapse,
               onOpenQueue: _openQueueState,
@@ -330,6 +342,32 @@ class _PlayerOverlayState extends ConsumerState<PlayerOverlay>
               ),
             ),
           ),
+
+        // The ONE shared-element artwork, above every layer so it reads as a
+        // single element that grows/shrinks between the mini thumb, the full
+        // hero and the pill thumb. Interactive only at rest in full Now Playing:
+        // horizontal = swipe-to-skip (ArtworkStage), vertical = drag-to-collapse.
+        if (artFade > 0.001)
+          Positioned.fromRect(
+            rect: artScreen,
+            child: IgnorePointer(
+              ignoring: !artInteractive,
+              child: Opacity(
+                opacity: artFade,
+                child: GestureDetector(
+                  onVerticalDragStart: artInteractive ? _onDragStart : null,
+                  onVerticalDragUpdate: artInteractive ? _onDragUpdate : null,
+                  onVerticalDragEnd: artInteractive ? _onDragEnd : null,
+                  child: ArtworkStage(
+                    size: artScreen.width,
+                    borderRadius: artRadius,
+                    enabled: artInteractive,
+                    playing: playing,
+                  ),
+                ),
+              ),
+            ),
+          ),
       ],
     );
   }
@@ -360,18 +398,16 @@ class _PlayerOverlayState extends ConsumerState<PlayerOverlay>
   static double _lerp(double a, double b, double t) => a + (b - a) * t;
 }
 
-/// The panel's stacked contents: mini row (fades out), full layout (fades in),
-/// and the shared-element artwork positioned in panel-local coordinates.
+/// The panel's stacked contents: the mini row (fades out) and the full layout
+/// (fades in). The shared-element artwork is a sibling layer above the panel
+/// (see `_buildFrame`), so it can span all three states without being clipped.
 class _PanelContents extends StatelessWidget {
   const _PanelContents({
     required this.t,
     required this.track,
     required this.fadeMini,
     required this.fadeFull,
-    required this.artFade,
     required this.playing,
-    required this.artLocalRect,
-    required this.artRadius,
     required this.topInset,
     required this.onCollapse,
     required this.onOpenQueue,
@@ -382,12 +418,7 @@ class _PanelContents extends StatelessWidget {
   final Track track;
   final double fadeMini;
   final double fadeFull;
-
-  /// Shared-element artwork opacity (1 → visible, 0 → lyrics have taken over).
-  final double artFade;
   final bool playing;
-  final Rect artLocalRect;
-  final double artRadius;
   final double topInset;
   final VoidCallback onCollapse;
   final VoidCallback onOpenQueue;
@@ -429,24 +460,6 @@ class _PanelContents extends StatelessWidget {
                   onCollapse: onCollapse,
                   onOpenQueue: onOpenQueue,
                   onExpandLyrics: onExpandLyrics,
-                ),
-              ),
-            ),
-          ),
-
-        // Shared-element artwork (fades out as lyrics take over).
-        if (artFade > 0.001)
-          Positioned.fromRect(
-            rect: artLocalRect,
-            child: IgnorePointer(
-              ignoring: artFade < 0.5,
-              child: Opacity(
-                opacity: artFade,
-                child: ArtworkStage(
-                  size: artLocalRect.width,
-                  borderRadius: artRadius,
-                  enabled: t > 0.98 && artFade > 0.98,
-                  playing: playing,
                 ),
               ),
             ),
@@ -871,7 +884,9 @@ class _PlayerPill extends ConsumerWidget {
                 Spacing.md, Spacing.xs, Spacing.xs, Spacing.sm),
             child: Row(
             children: <Widget>[
-              AlbumArt(artworkKey: track.artworkKey, size: 44),
+              // The shared-element artwork docks here (it's a sibling layer
+              // above the queue state), so the pill reserves its footprint.
+              const SizedBox(width: 44, height: 44),
               const SizedBox(width: Spacing.md),
               Expanded(
                 child: Column(
