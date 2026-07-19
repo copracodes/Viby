@@ -95,9 +95,11 @@ class SettingsScreen extends ConsumerWidget {
           const Divider(),
           const _SectionHeader('About'),
           const _AboutSection(),
-          // Developer tools ship in non-release builds only (debug + profile,
-          // so the profile perf pass can seed 10k) — stripped from release.
-          if (!kReleaseMode) ...<Widget>[
+          // The Developer section (scan/queue debug tools + the synthetic
+          // seeder) is compiled in for DEBUG builds only. The literal
+          // `kDebugMode` const dead-code-eliminates this whole block from
+          // release *and* profile, so it never ships and its widgets tree-shake.
+          if (kDebugMode) ...<Widget>[
             const Divider(),
             const _SectionHeader('Developer'),
             const _SeederTile(),

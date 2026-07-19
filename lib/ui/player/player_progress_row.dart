@@ -7,14 +7,17 @@ import '../../core/router.dart';
 import '../../state/ab_loop_provider.dart';
 import '../../state/lyrics_providers.dart';
 import '../widgets/like_button.dart';
+import 'ab_repeat_icon.dart';
 import 'lyrics_offset_sheet.dart';
 import 'player_progress.dart';
 import 'sleep_timer_sheet.dart';
 import 'speed_sheet.dart';
 
 /// The scrubber flanked by four small, quiet corner actions (Step 2.2 iteration):
-/// Love + A-B on the left, Queue + More on the right. Icons are ~20dp in a 44dp
-/// touch box, secondary-coloured until active; the bar shortens to fit.
+/// Love + A-B on the left, Queue + More on the right. All four are one visual
+/// family — plain 24dp glyphs with no background container — in a 44dp touch box,
+/// secondary-coloured until active (then a color+fill change only); the bar
+/// shortens to fit.
 ///
 /// More holds Sleep timer, Equalizer, Playback speed and Adjust sync — the
 /// sleep/speed *state* still shows via the chips row by the title. Lyrics has no
@@ -40,16 +43,20 @@ class ProgressWithActions extends ConsumerWidget {
       children: <Widget>[
         Row(
           children: <Widget>[
-            LikeButton(trackId: trackId, size: 20),
+            LikeButton(trackId: trackId, size: 24),
             _CornerAction(
-              icon: Icons.repeat_on_outlined,
+              // A custom minimal A-B glyph (two markers + a loop arc). Material
+              // has no A-B mark, and `repeat_on_outlined` carries a rounded-square
+              // background that breaks the plain-glyph family; a bare `repeat`
+              // wouldn't read as *A-B* either. Active = primary fill only.
+              iconBuilder: (Color c) => AbRepeatIcon(color: c),
               tooltip: 'A-B repeat',
               active: ab is! AbLoopInactive,
               onTap: () => ref.read(abLoopControllerProvider.notifier).tap(),
             ),
             const Spacer(),
             _CornerAction(
-              icon: Icons.queue_music,
+              iconBuilder: (Color c) => Icon(Icons.queue_music, color: c),
               tooltip: 'Queue',
               onTap: onOpenQueue,
             ),
@@ -62,17 +69,18 @@ class ProgressWithActions extends ConsumerWidget {
   }
 }
 
-/// A small, quiet corner action: 20dp icon, 44dp minimum touch box, secondary
-/// colour until [active] (then scheme primary).
+/// A small, quiet corner action: a 24dp glyph, 44dp minimum touch box, secondary
+/// colour until [active] (then scheme primary). [iconBuilder] receives the
+/// resolved colour so both Material icons and the custom A-B glyph theme alike.
 class _CornerAction extends StatelessWidget {
   const _CornerAction({
-    required this.icon,
+    required this.iconBuilder,
     required this.tooltip,
     required this.onTap,
     this.active = false,
   });
 
-  final IconData icon;
+  final Widget Function(Color color) iconBuilder;
   final String tooltip;
   final VoidCallback? onTap;
   final bool active;
@@ -84,10 +92,10 @@ class _CornerAction extends StatelessWidget {
     return IconButton(
       onPressed: onTap,
       tooltip: tooltip,
-      iconSize: 20,
+      iconSize: 24,
       visualDensity: VisualDensity.compact,
       constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
-      icon: Icon(icon, color: color),
+      icon: iconBuilder(color),
     );
   }
 }
@@ -104,7 +112,7 @@ class _MoreAction extends ConsumerWidget {
         ref.watch(currentLyricsProvider).valueOrNull?.isSynced ?? false;
     return PopupMenuButton<String>(
       tooltip: 'More',
-      iconSize: 20,
+      iconSize: 24,
       icon: Icon(Icons.more_vert, color: scheme.onSurfaceVariant),
       constraints: const BoxConstraints(minWidth: 44),
       onSelected: (String value) {

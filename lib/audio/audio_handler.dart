@@ -13,6 +13,7 @@ import 'package:path_provider/path_provider.dart';
 import '../data/db/tables.dart' show RepeatMode, TrackSource;
 import '../data/models/track.dart';
 import 'eq_service.dart' show EqEngine;
+import 'fade_envelope.dart';
 import 'loop_region.dart';
 import 'playback_fault.dart';
 import 'replay_gain.dart';
@@ -135,10 +136,12 @@ class VibyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   /// Interruption ducking (1.0 = not ducked).
   double _duck = 1;
 
-  /// Fade envelope: resume fade-in and the sleep timer's fade-out.
-  double _fade = 1;
+  /// Fade envelope: resume fade-in and the sleep timer's fade-out. A pure,
+  /// clock-injected state machine (see [FadeEnvelope]); [_fadeTicker] is the
+  /// only thing that advances it.
+  final FadeEnvelope _fade = FadeEnvelope();
 
-  Timer? _fadeTimer;
+  Timer? _fadeTicker;
 
   ReplayGainSettings _rgSettings = const ReplayGainSettings();
 
@@ -267,7 +270,7 @@ class VibyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
 
   /// Pushes the composed volume to the player. The ONLY caller of setVolume.
   void _applyVolume() {
-    _player.setVolume(mixVolume(gain: _gain, duck: _duck, fade: _fade));
+    _player.setVolume(mixVolume(gain: _gain, duck: _duck, fade: _fade.value));
   }
 
   void _applyGainForCurrentTrack() {
@@ -287,26 +290,21 @@ class VibyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
     _applyGainForCurrentTrack();
   }
 
-  /// Ramps [_fade] to [target] over [duration] (linear, ~60fps). Cancels any
-  /// ramp in flight, so a resume during a sleep fade-out simply takes over.
-  void _rampFade(double target, Duration duration) {
-    _fadeTimer?.cancel();
-    if (duration <= Duration.zero) {
-      _fade = target;
+  /// Drives the [FadeEnvelope]'s in-flight ramp to the player, one [kFadeTick] at
+  /// a time (~60fps). Idempotent: cancels any running ticker first, and does
+  /// nothing (beyond a single [_applyVolume]) if the envelope isn't ramping — so
+  /// a resume during a sleep fade-out simply takes over.
+  void _runFadeTicker() {
+    _fadeTicker?.cancel();
+    _fadeTicker = null;
+    _applyVolume();
+    if (!_fade.ramping) return;
+    _fadeTicker = Timer.periodic(kFadeTick, (Timer t) {
+      _fade.advance(kFadeTick);
       _applyVolume();
-      return;
-    }
-    const Duration step = Duration(milliseconds: 16);
-    final double from = _fade;
-    final int steps = (duration.inMilliseconds / step.inMilliseconds).ceil();
-    int i = 0;
-    _fadeTimer = Timer.periodic(step, (Timer t) {
-      i++;
-      _fade = i >= steps ? target : from + (target - from) * (i / steps);
-      _applyVolume();
-      if (i >= steps) {
+      if (!_fade.ramping) {
         t.cancel();
-        _fadeTimer = null;
+        _fadeTicker = null;
       }
     });
   }
@@ -347,7 +345,10 @@ class VibyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
     _sleepMode = null;
     _sleepDeadline = null;
     _emitSleep(const SleepTimerState.idle());
-    if (_fade < 1) _rampFade(1, const Duration(milliseconds: 400));
+    if (_fade.value < 1) {
+      _fade.ramp(1, const Duration(milliseconds: 400));
+      _runFadeTicker();
+    }
   }
 
   void _tickSleep() {
@@ -366,8 +367,8 @@ class VibyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
     // Drive the fade from `remaining` rather than a one-shot ramp: it stays
     // right if the user seeks, and a paused stretch doesn't drain the envelope.
     final double level = sleepFadeLevel(remaining);
-    if (_fadeTimer == null && level != _fade) {
-      _fade = level;
+    if (!_fade.ramping && level != _fade.value) {
+      _fade.snap(level);
       _applyVolume();
     }
 
@@ -384,9 +385,9 @@ class VibyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   /// Pause, then restore the envelope so the *next* play isn't silent.
   Future<void> _sleepStop() async {
     await _player.pause();
-    _fadeTimer?.cancel();
-    _fadeTimer = null;
-    _fade = 1;
+    _fadeTicker?.cancel();
+    _fadeTicker = null;
+    _fade.snap(1);
     _applyVolume();
   }
 
@@ -586,7 +587,16 @@ class VibyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
       developer.log('failed to load queue', error: e, stackTrace: st);
       return;
     }
-    if (autoPlay) await _player.play();
+    if (autoPlay) {
+      // A fresh queue starts at its level, not faded (the fade is a *resume*
+      // affordance). Reset the envelope so a ramp frozen by an earlier pause
+      // can't quietly attenuate the new track.
+      _fadeTicker?.cancel();
+      _fadeTicker = null;
+      _fade.snap(1);
+      _applyVolume();
+      await _player.play();
+    }
   }
 
   Future<void> insertTrack(int index, Track track) async {
@@ -729,18 +739,25 @@ class VibyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   /// track should begin at its level, not swell into it). The fade multiplies
   /// the ReplayGain scalar rather than replacing it (see `volume_mixer.dart`),
   /// so we ramp up to the track's normalized level, never past it.
+  ///
+  /// The ramp is armed and ticked *before* the player's `play()` — and never
+  /// awaits it. just_audio's `play()` Future does not complete until the *next*
+  /// pause/stop (see its docs), so scheduling the ramp after `await _player
+  /// .play()` left the envelope stranded at 0 and playback silent while the
+  /// position advanced. [FadeEnvelope.resume] guarantees the ramp always lands
+  /// at 1.0 regardless of how play/pause interleave.
   @override
   Future<void> play() async {
-    _fade = 0;
-    _applyVolume();
-    await _player.play();
-    _rampFade(1, kResumeFadeIn);
+    _fade.resume(kResumeFadeIn, wasPlaying: _player.playing);
+    _runFadeTicker();
+    unawaited(_player.play());
   }
 
   @override
   Future<void> pause() async {
-    _fadeTimer?.cancel();
-    _fadeTimer = null;
+    _fade.cancel();
+    _fadeTicker?.cancel();
+    _fadeTicker = null;
     await _player.pause();
   }
 
@@ -776,6 +793,8 @@ class VibyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
 
   /// Releases the underlying player. Called when the whole handler is torn down.
   Future<void> dispose() async {
+    _fadeTicker?.cancel();
+    _sleepTicker?.cancel();
     _loopTicker?.cancel();
     await _loopStreamController.close();
     await _faults.close();

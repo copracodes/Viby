@@ -7,6 +7,7 @@ import '../../data/db/viby_database.dart';
 import '../../state/database_providers.dart';
 import '../../state/library_actions.dart';
 import '../../state/library_providers.dart';
+import '../../state/theme_providers.dart';
 import '../theme/tokens.dart';
 import '../widgets/album_grid_cell.dart';
 import '../widgets/artist_avatar.dart';
@@ -134,7 +135,7 @@ class _ArtistDetailScreenState extends ConsumerState<ArtistDetailScreen> {
   }
 }
 
-class _HeaderArt extends StatelessWidget {
+class _HeaderArt extends ConsumerWidget {
   const _HeaderArt({
     required this.artistId,
     required this.name,
@@ -146,16 +147,30 @@ class _HeaderArt extends StatelessWidget {
   final int albumCount;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final ThemeData theme = Theme.of(context);
+    final ColorScheme scheme = theme.colorScheme;
+
+    // The portrait's own colour tints the top of the header, fading into the
+    // surface behind the name. Reuses the shared palette pipeline/cache via
+    // [artistSeedProvider]; null (no art / no usable colour) → the calm
+    // surface gradient. Scoped to this header only (dynamic colour is
+    // contextual, not a whole-screen theme change).
+    final Color? seed = ref.watch(artistSeedProvider(artistId)).valueOrNull;
+    // Top tint at ~40% strength over the surface; guarded so a pathological
+    // seed can't wash out the name's contrast (the bottom stop stays pure
+    // surface, so text-on-surface legibility is preserved by construction).
+    final Color topColor = seed == null
+        ? scheme.surfaceContainerHigh
+        : Color.lerp(scheme.surface, seed, 0.40)!;
     return DecoratedBox(
       decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
           colors: <Color>[
-            theme.colorScheme.surfaceContainerHigh,
-            theme.colorScheme.surface,
+            topColor,
+            scheme.surface,
           ],
         ),
       ),

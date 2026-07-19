@@ -131,7 +131,17 @@ class _PlayerOverlayState extends ConsumerState<PlayerOverlay>
 
   // --- Mini ↔ full drag (the panel while no queue is open) ------------------
 
-  void _onDragStart(DragStartDetails _) {}
+  /// Which stop the current mini↔full drag *began* at (0 = mini, 1 = full),
+  /// captured at drag start. The settle rule keys off where the drag started,
+  /// not where it happens to be at release: deriving the origin from `_c.value`
+  /// at release flipped it once a full→mini drag crossed the midpoint, so the
+  /// "commit to the opposite end" branch sent the panel back *up* to full — the
+  /// two-swipes-to-minimize regression.
+  double _dragOrigin = 0;
+
+  void _onDragStart(DragStartDetails _) {
+    _dragOrigin = _c.value >= 0.5 ? 1 : 0;
+  }
 
   void _onDragUpdate(DragUpdateDetails d) {
     // Drag up (negative dy) opens.
@@ -144,7 +154,7 @@ class _PlayerOverlayState extends ConsumerState<PlayerOverlay>
     final SettleTarget target = settleTarget(
       value: _c.value,
       velocity: velocityFraction,
-      origin: _c.value >= 0.5 ? 1 : 0,
+      origin: _dragOrigin,
     );
     target == SettleTarget.expanded ? _expand() : _collapse();
   }
@@ -354,10 +364,18 @@ class _PlayerOverlayState extends ConsumerState<PlayerOverlay>
               ignoring: !artInteractive,
               child: Opacity(
                 opacity: artFade,
+                // The vertical-drag callbacks are attached unconditionally, NOT
+                // gated on `artInteractive`. A collapse drag begun on the artwork
+                // pushes `t` below the 0.98 interactive threshold within a few
+                // pixels; nulling the callbacks there would dispose the active
+                // drag recognizer mid-gesture and strand the panel near full —
+                // the other half of the two-swipe regression. The IgnorePointer
+                // above still blocks a *new* drag from starting here once we're
+                // no longer at rest; an in-flight one keeps its pointer.
                 child: GestureDetector(
-                  onVerticalDragStart: artInteractive ? _onDragStart : null,
-                  onVerticalDragUpdate: artInteractive ? _onDragUpdate : null,
-                  onVerticalDragEnd: artInteractive ? _onDragEnd : null,
+                  onVerticalDragStart: _onDragStart,
+                  onVerticalDragUpdate: _onDragUpdate,
+                  onVerticalDragEnd: _onDragEnd,
                   child: ArtworkStage(
                     size: artScreen.width,
                     borderRadius: artRadius,

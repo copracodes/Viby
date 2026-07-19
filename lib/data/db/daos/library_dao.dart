@@ -196,6 +196,11 @@ class LibraryDao extends DatabaseAccessor<VibyDatabase>
           ),
           leftOuterJoin(playHistory, playHistory.trackId.equalsExp(tracks.id)),
         ])
+          // The two aggregates are computed columns; they MUST be added to the
+          // statement or `r.read` on them throws ("result set has no column for
+          // that expression") — which failed the whole query for every artist
+          // and dropped the UI to the letter avatar everywhere.
+          ..addColumns(<Expression<Object>>[trackCount, playCount])
           ..where(albums.artistId.equals(artistId))
           ..groupBy(<Expression<Object>>[albums.id]);
     final List<TypedResult> rows = await statement.get();

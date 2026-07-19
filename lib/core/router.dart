@@ -45,7 +45,9 @@ class AppRoutes {
   /// The virtual Liked Songs collection (under the Library tab).
   static const String liked = '/library/liked';
 
-  /// THROWAWAY debug routes (Phase 1.2 / 1.3), now under Settings › Developer.
+  /// Permanent dev tools under Settings › Developer — registered only in debug
+  /// builds (see the `kDebugMode` guard on their routes; stripped from
+  /// release/profile).
   static const String debugScan = '/settings/debug-scan';
   static const String debugQueue = '/settings/debug-queue';
 
@@ -133,9 +135,10 @@ final GoRouter appRouter = GoRouter(
               path: AppRoutes.settings,
               builder: (BuildContext context, GoRouterState state) =>
                   const SettingsScreen(),
-              // Throwaway debug tools — registered in non-release builds only
-              // (debug + profile, so the profile perf pass can reach them), so
-              // they (and their screens) are tree-shaken out of release.
+              // Permanent dev tools — registered in DEBUG builds only. The
+              // literal `kDebugMode` const means release *and* profile builds
+              // dead-code-eliminate these branches, tree-shaking the debug
+              // screens (and their routes) out of the binary entirely.
               routes: <RouteBase>[
                 GoRoute(
                   path: 'hidden',
@@ -147,13 +150,13 @@ final GoRouter appRouter = GoRouter(
                   builder: (BuildContext context, GoRouterState state) =>
                       const PlaybackSettingsScreen(),
                 ),
-                if (!kReleaseMode)
+                if (kDebugMode)
                   GoRoute(
                     path: 'debug-scan',
                     builder: (BuildContext context, GoRouterState state) =>
                         const DebugScanScreen(),
                   ),
-                if (!kReleaseMode)
+                if (kDebugMode)
                   GoRoute(
                     path: 'debug-queue',
                     builder: (BuildContext context, GoRouterState state) =>

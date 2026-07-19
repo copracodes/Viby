@@ -165,3 +165,18 @@ Future<Color?> currentSeed(Ref ref) async {
   if (artworkKey == null) return null;
   return ref.watch(dynamicThemeServiceProvider).seedFor(artworkKey);
 }
+
+/// The dynamic seed [Color] for an artist's *derived portrait* (their most-played
+/// album's art; see [artistArtworkProvider]), or null when the artist has no art
+/// or no usable colour. Reuses the exact same extraction pipeline + LRU/drift
+/// palette cache as [currentSeed] — no second extractor. Unlike [currentSeed] it
+/// is NOT gated on the dynamic-colour setting: the artist-header tint is a
+/// contextual header treatment (like Now Playing's backdrop), not a whole-app
+/// recolour, per the dynamic-colour-is-contextual rule.
+@riverpod
+Future<Color?> artistSeed(Ref ref, String artistId) async {
+  final String? artworkKey =
+      await ref.watch(artistArtworkProvider(artistId).future);
+  if (artworkKey == null) return null;
+  return ref.watch(dynamicThemeServiceProvider).seedFor(artworkKey);
+}

@@ -176,15 +176,20 @@ a native-integration failure invisible to `flutter analyze` and unit tests.
 tests); **Step 1.2 — the local scanner** (`lib/data/sources/local/`:
 permission flow via `permission_handler`, deterministic-id mapping + junk
 filter, full/incremental scans with a cancelable `ScanProgress` stream, album
-artwork extraction, and a throwaway `/debug-scan` screen); and **Step 1.3 — the
+artwork extraction, and a `/debug-scan` screen); and **Step 1.3 — the
 queue engine** — the `Track` domain model (`lib/data/models/track.dart`); a real
 gapless playlist in the handler (in-place insert/remove/move via just_audio's
 player-level playlist API — `ConcatenatingAudioSource` itself is deprecated in
 the pinned 0.10.6); `QueueController` (`lib/state/queue_provider.dart`) owning
 order/shuffle/repeat with pure, unit-tested index math (shuffle is engine-side —
 just_audio's own shuffle stays OFF); debounced persistence + cold-start restore
-(`queue_persistence.dart`, tolerant of deleted tracks); and a throwaway
-`/debug-queue` screen. Restore is guarded so it can never block boot.
+(`queue_persistence.dart`, tolerant of deleted tracks); and a `/debug-queue`
+screen. Restore is guarded so it can never block boot.
+
+(The `/debug-scan` and `/debug-queue` screens and the synthetic-library seeder
+are permanent developer tools, not throwaways — but as of Step 4.6 the whole
+Settings › Developer section and both routes are gated behind `kDebugMode`, so
+they compile only into debug builds and are tree-shaken out of release/profile.)
 
 **Step 1.4 (Session A) — the UI shell + library browsing** is built: a
 `StatefulShellRoute` bottom nav (Home / Library / Search / Settings) with a
@@ -782,4 +787,83 @@ and the absolute-deadline background case, TXXX/RVA2 parsing, the scan phase's
 read-once behaviour, v8→v9 migration). Analyze clean. **Device pass complete**
 (S22): RG evens out a loud/quiet pair, the sleep timer fades and stops while
 backgrounded, the speed chip appears and resets on restart. Subsonic remains
+Phase 4+.
+
+**Step 4.6 — pre-launch bug pass.** Four items, the first two root-caused (no
+symptom patches):
+- **Silent-playback bug (root cause: the resume fade awaited just_audio's
+  `play()`).** just_audio's `AudioPlayer.play()` Future completes not when
+  playback *starts* but at the next pause/stop (its documented behaviour). The
+  handler scheduled the resume ramp *after* `await _player.play()`, so on a real
+  resume the ramp never ran during playback and the fade envelope was stranded at
+  0 — audible position, no sound; rapid toggling raced past it (already-`playing`
+  → `play()` returns immediately → ramp ran), which is why fast pause-play stayed
+  audible. Fix: the fade is now a pure, clock-injected state machine
+  (`audio/fade_envelope.dart`, `FadeEnvelope`) advanced by the handler's own
+  ticker, never coupled to the play Future. Its invariant — **any `resume` +
+  enough `advance` lands at exactly 1.0** — means no pause/play interleaving can
+  strand it low; pause cancels the ramp, resume always re-targets full from the
+  current value, and the fade factor still multiplies the ReplayGain scalar (so
+  the target is the RG level, not a hard 1.0). A fresh queue snaps the envelope to
+  full (an unfaded start). Tested with a fake clock incl. a 2000-trial final-volume
+  invariant property test.
+- **Drag-to-minimize regression (two root causes in `player_overlay.dart`).**
+  (1) `_onDragEnd` derived the settle `origin` from `_c.value` *at release*
+  instead of where the drag *began*; once a full→mini drag crossed the midpoint
+  the origin flipped to 0 and the "commit to the opposite end" branch sent the
+  panel back *up*. Now the origin is captured in `_onDragStart` (`_dragOrigin`).
+  (2) The shared-artwork layer gated its vertical-drag callbacks on
+  `artInteractive`, which flips false within ~14px of a downward drag (as `t`
+  drops below 0.98) — nulling the callbacks disposed the active drag recognizer
+  mid-gesture, stranding a drag *begun on the artwork* near full. The callbacks
+  are now attached unconditionally (the `IgnorePointer` still blocks a *new* drag
+  when not at rest). A widget test drives a single moderate-velocity drag from
+  both the artwork and a bare panel area and asserts one-drag collapse; each fix
+  was verified load-bearing by reverting it.
+- **Corner actions polish.** All four (heart · A-B · queue · more) bumped 20→24dp
+  in ≥44dp touch boxes and unified as one plain-glyph family. The A-B action's
+  `repeat_on_outlined` (a baked-in rounded-square background) is replaced by a
+  hand-drawn glyph — two endpoint markers + a loop arc with a return arrowhead
+  (`ui/player/ab_repeat_icon.dart`, a `CustomPainter` at the Material ~2dp
+  round-cap weight); active state is color+fill only (secondary → primary).
+- **Developer section gated behind `kDebugMode`.** The Settings › Developer
+  section (scan/queue debug + synthetic seeder) and both `/settings/debug-*`
+  routes now sit behind the literal `kDebugMode` const (was `!kReleaseMode`, which
+  still shipped them in profile), so release *and* profile dead-code-eliminate and
+  tree-shake them out entirely. A route-table test asserts the debug routes are
+  present **iff** `kDebugMode` (the gating contract). The debug screens/seeder are
+  permanent dev tools, not throwaways.
+- **Artist artwork never rendered (root cause: a drift query threw for every
+  artist).** The derived-portrait feature (an artist's picture borrowed from
+  their most-played album, letter avatar as last resort) showed letter
+  placeholders everywhere. Root cause found by inspecting the live on-device DB
+  (the data was healthy — Travis Scott had 3 albums with art) then reproducing in
+  a DAO test: `LibraryDao.artistArtCandidates` read its `trackCount`/`playCount`
+  aggregate columns via `r.read(...)` **without `..addColumns([...])`**, which
+  drift rejects ("result set has no column for that expression") — so the query
+  threw for *every* artist, the `artistArtwork` provider became an AsyncError, and
+  `ArtistArt` fell back to the letter avatar universally. One-line fix: add the
+  aggregates to the statement (every other aggregate query in the DAO already
+  did). The pure picker already falls through play-count → track-count →
+  alphabetical → (only then) null, so zero-play artists still get real art.
+- **Artist-detail palette header.** The artist-detail header now paints a
+  vertical gradient tinted by the portrait's own colour (~40% at the top, fading
+  into `surface` behind the name), reusing the **existing** dynamic-theme
+  extraction pipeline + LRU/drift palette cache via a new `artistSeedProvider`
+  (no second extractor). It's a contextual header treatment, not a whole-screen
+  recolour (per the dynamic-colour-is-contextual rule), and lives in the
+  `FlexibleSpaceBar` background so it collapses with the header. Null seed (no
+  art / near-monochrome) → the calm surface gradient; the bottom stop stays pure
+  `surface` so text contrast holds.
+
+512 tests green (added: the `FadeEnvelope` interruption + invariant property
+tests, the single-drag full→mini regression test from artwork + bare panel, the
+corner-action family/24dp/active-colour test, the `kDebugMode` route-gate test,
+the `artistArtCandidates` aggregate/fall-through tests, and the `artistSeed`
+cache-reuse + rescan-invalidation tests). Analyze clean. **Device pass**: silent
+playback ✓ and one-swipe minimize ✓ verified on S22 (the bug was also confirmed
+first-hand by pulling the on-device DB). Still pending: artist artwork + tinted
+header on device; pause/play torture at every spacing incl. inside the first
+300ms; minimize from ten start points; icon coherence at arm's length; sideload
+the release APK and confirm Settings has no Developer section. Subsonic remains
 Phase 4+.
